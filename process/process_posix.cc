@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
