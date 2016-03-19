@@ -31,7 +31,8 @@ SRC_ROOT = os.path.dirname(os.path.dirname(GN_ROOT))
 
 is_linux = sys.platform.startswith('linux')
 is_mac = sys.platform.startswith('darwin')
-is_posix = is_linux or is_mac
+is_freebsd = sys.platform.startswith('freebsd')
+is_posix = is_linux or is_mac or is_freebsd
 
 def check_call(cmd, **kwargs):
   logging.debug('Running: %s', ' '.join(cmd))
@@ -220,10 +221,11 @@ def write_ninja(path, root_gen_dir, options):
       'base/metrics/bucket_ranges.cc',
       'base/metrics/histogram.cc',
       'base/metrics/histogram_base.cc',
-      'base/metrics/histogram_persistence.cc',
       'base/metrics/histogram_samples.cc',
       'base/metrics/metrics_hashes.cc',
+      'base/metrics/persistent_histogram_allocator.cc',
       'base/metrics/persistent_memory_allocator.cc',
+      'base/metrics/persistent_sample_map.cc',
       'base/metrics/sample_map.cc',
       'base/metrics/sample_vector.cc',
       'base/metrics/sparse_histogram.cc',
@@ -350,6 +352,34 @@ def write_ninja(path, root_gen_dir, options):
         'cflags': cflags + ['-DHAVE_CONFIG_H'],
     }
 
+  if is_freebsd:
+    libs.extend(['-lrt'])
+    ldflags.extend(['-pthread', '-lexecinfo'])
+
+    static_libraries['xdg_user_dirs'] = {
+        'sources': [
+            'base/third_party/xdg_user_dirs/xdg_user_dir_lookup.cc',
+        ],
+        'tool': 'cxx',
+    }
+
+    static_libraries['base']['sources'].extend([
+        'base/memory/shared_memory_posix.cc',
+        'base/nix/xdg_util.cc',
+        'base/process/process_handle_freebsd.cc',
+        'base/process/process_iterator_freebsd.cc',
+        'base/process/process_metrics_freebsd.cc',
+        'base/strings/sys_string_conversions_posix.cc',
+        'base/sys_info_freebsd.cc',
+        'base/threading/platform_thread_freebsd.cc',
+    ])
+
+    static_libraries['libevent']['include_dirs'].extend([
+        os.path.join(SRC_ROOT, 'third_party', 'libevent', 'freebsd')
+    ])
+    static_libraries['libevent']['sources'].extend([
+        'third_party/libevent/kqueue.c',
+    ])
 
   if is_linux:
     libs.extend(['-lrt'])
