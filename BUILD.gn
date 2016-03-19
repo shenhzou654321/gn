@@ -217,26 +217,6 @@ static_library("gn_lib") {
   ]
 }
 
-action("last_commit_position") {
-  script = "last_commit_position.py"
-
-  # This dependency forces a re-run when the code is synced.
-  inputs = [
-    "//build/util/LASTCHANGE",
-  ]
-
-  outfile = "$target_gen_dir/last_commit_position.h"
-  outputs = [
-    outfile,
-  ]
-
-  args = [
-    rebase_path("//", root_build_dir),
-    rebase_path(outfile, root_build_dir),
-    "TOOLS_GN_LAST_COMMIT_POSITION_H_",
-  ]
-}
-
 # Note for Windows debugging: GN is super-multithreaded and uses a lot of STL.
 # Iterator debugging on Windows does locking for every access, which ends up
 # slowing down debug runtime from 0:36 to 9:40. If you want to run debug builds
@@ -249,7 +229,6 @@ executable("gn") {
 
   deps = [
     ":gn_lib",
-    ":last_commit_position",
     "//base",
     "//build/config/sanitizers:deps",
   ]
