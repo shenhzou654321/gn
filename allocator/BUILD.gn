@@ -256,7 +256,7 @@ if (use_allocator == "tcmalloc") {
       defines += [ "ENABLE_PROFILING=1" ]
     }
 
-    if (is_linux || is_android) {
+    if (is_linux || is_android || is_freebsd) {
       sources -= [
         "$tcmalloc_dir/src/system-alloc.h",
         "$tcmalloc_dir/src/windows/port.cc",

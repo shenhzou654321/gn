@@ -42,6 +42,7 @@
 
 #if defined(OS_POSIX)
 #include <fcntl.h>
+#include <signal.h>
 #endif
 
 #if defined(OS_MACOSX)

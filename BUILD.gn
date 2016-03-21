@@ -620,7 +620,7 @@ component("base") {
     "process/process.h",
     "process/process_handle.cc",
 
-    #"process/process_handle_freebsd.cc",  # Unused in Chromium build.
+    "process/process_handle_freebsd.cc",  # Unused in Chromium build.
     "process/process_handle_linux.cc",
     "process/process_handle_mac.cc",
 
@@ -634,7 +634,7 @@ component("base") {
     "process/process_iterator.cc",
     "process/process_iterator.h",
 
-    #"process/process_iterator_freebsd.cc",  # Unused in Chromium build.
+    "process/process_iterator_freebsd.cc",  # Unused in Chromium build.
     "process/process_iterator_linux.cc",
     "process/process_iterator_mac.cc",
 
@@ -644,7 +644,7 @@ component("base") {
     "process/process_metrics.cc",
     "process/process_metrics.h",
 
-    #"process/process_metrics_freebsd.cc",  # Unused in Chromium build.
+    "process/process_metrics_freebsd.cc",  # Unused in Chromium build.
     "process/process_metrics_ios.cc",
     "process/process_metrics_linux.cc",
     "process/process_metrics_mac.cc",
@@ -751,7 +751,7 @@ component("base") {
     "sys_info_android.cc",
     "sys_info_chromeos.cc",
 
-    #"sys_info_freebsd.cc",  # Unused in Chromium build.
+    "sys_info_freebsd.cc",  # Unused in Chromium build.
     "sys_info_ios.mm",
     "sys_info_linux.cc",
     "sys_info_mac.cc",
@@ -1400,6 +1400,30 @@ component("base") {
     ]
 
     set_sources_assignment_filter(sources_assignment_filter)
+  }
+  
+  if (is_freebsd) {
+    sources += [
+      #"files/file_path_watcher_kqueue.cc",
+      #"files/file_path_watcher_kqueue.h",
+      "threading/platform_thread_freebsd.cc",
+      "nix/mime_util_xdg.cc",
+      "nix/mime_util_xdg.h",
+      "nix/xdg_util.cc",
+      "nix/xdg_util.h",
+    ]
+    deps += [
+      "//base/third_party/symbolize",
+      "//base/third_party/xdg_mime",
+      "//base/third_party/xdg_user_dirs",
+    ]
+  } else {
+    sources -= [
+      "process/process_handle_freebsd.cc",
+      "process/process_iterator_freebsd.cc",
+      "process/process_metrics_freebsd.cc",
+      "sys_info_freebsd.cc",
+    ]
   }
 
   if (!use_glib) {

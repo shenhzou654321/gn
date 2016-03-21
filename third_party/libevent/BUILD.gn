@@ -32,6 +32,9 @@ source_set("libevent") {
   } else if (is_android) {
     sources += [ "epoll.c" ]
     include_dirs = [ "android" ]
+  } else if (is_freebsd) {
+    sources += [ "kqueue.c" ]
+    include_dirs = [ "freebsd" ]
   } else if (is_nacl_nonsfi) {
     sources -= [
       "evdns.c",
