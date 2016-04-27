@@ -70,7 +70,29 @@
 
 
 ```
-## **\--markdown**: write the output in the Markdown format.
+## **\--fail-on-unused-args**: Treat unused build args as fatal errors.
+
+```
+  If you set a value in a build's "gn args" and never use it in the
+  build (in a declare_args() block), GN will normally print an error
+  but not fail the build.
+
+  In many cases engineers would use build args to enable or disable
+  features that would sometimes get removed. It would by annoying to
+  block work for typically benign problems. In Chrome in particular,
+  flags might be configured for build bots in a separate infrastructure
+  repository, or a declare_args block might be changed in a third party
+  repository. Treating these errors as blocking forced complex multi-
+  way patches to land what would otherwise be simple changes.
+
+  In some cases, such concerns are not as important, and a mismatch
+  in build flags between the invoker of the build and the build files
+  represents a critical mismatch that should be immediately fixed. Such
+  users can set this flag to force GN to fail in that case.
+
+
+```
+## **\--markdown**: Write help output in the Markdown format.
 
 ## **\--[no]color**: Forces colored output on or off.
 
@@ -2730,6 +2752,20 @@
 
         The command to run.
 
+    default_output_dir  [string with substitutions]
+        Valid for: linker tools
+
+        Default directory name for the output file relative to the
+        root_build_dir. It can contain other substitution patterns.
+        This will be the default value for the {{output_dir}} expansion
+        (discussed below) but will be overridden by the "output_dir"
+        variable in a target, if one is specified.
+
+        GN doesn't do anything with this string other than pass it
+        along, potentially with target-specific overrides. It is the
+        tool's job to use the expansion so that the files will be in
+        the right place.
+
     default_output_extension  [string]
         Valid for: linker tools
 
@@ -2746,7 +2782,7 @@
 
         Example: default_output_extension = ".exe"
 
-    depfile  [string]
+    depfile  [string with substitutions]
         Valid for: compiler tools (optional)
 
         If the tool can write ".d" files, this specifies the name of
@@ -2808,13 +2844,11 @@
           ]
 
         Example for a linker tool that produces a .dll and a .lib. The
-        use of {{output_extension}} rather than hardcoding ".dll"
-        allows the extension of the library to be overridden on a
-        target-by-target basis, but in this example, it always
-        produces a ".lib" import library:
+        use of {{target_output_name}}, {{output_extension}} and
+        {{output_dir}} allows the target to override these values.
           outputs = [
-            "{{root_out_dir}}/{{target_output_name}}{{output_extension}}",
-            "{{root_out_dir}}/{{target_output_name}}.lib",
+            "{{output_dir}}/{{target_output_name}}{{output_extension}}",
+            "{{output_dir}}/{{target_output_name}}.lib",
           ]
 
     link_output  [string with substitutions]
@@ -2827,7 +2861,7 @@
         should match entries in the "outputs". If unspecified, the
         first item in the "outputs" array will be used for all. See
         "Separate linking and dependencies for shared libraries"
-        below for more.  If link_output is set but runtime_link_output
+        below for more. If link_output is set but runtime_link_output
         is not set, runtime_link_output defaults to link_output.
 
         On Windows, where the tools produce a .dll shared library and
@@ -2844,6 +2878,10 @@
         output_name if one is manually specified for it) if the prefix
         is not already there. The result will show up in the
         {{output_name}} substitution pattern.
+
+        Individual targets can opt-out of the output prefix by setting:
+          output_prefix_override = true
+        (see "gn help output_prefix_override").
 
         This is typically used to prepend "lib" to libraries on
         Posix systems:
@@ -2933,7 +2971,7 @@
     {{target_out_dir}}
         The directory of the generated file and output directories,
         respectively, for the current target. There is no trailing
-        slash.
+        slash. See also {{output_dir}} for linker tools.
         Example: "out/base/test"
 
     {{target_output_name}}
@@ -2987,6 +3025,7 @@
         Example: "gen/base/test"
 
   Linker tools have multiple inputs and (potentially) multiple outputs
+  The static library tool ("alink") is not considered a linker tool.
   The following expansions are available:
 
     {{inputs}}
@@ -3016,6 +3055,21 @@
 
         Example: "-lfoo -lbar"
 
+    {{output_dir}}
+        The value of the "output_dir" variable in the target, or the
+        the value of the "default_output_dir" value in the tool if the
+        target does not override the output directory. This will be
+        relative to the root_build_dir and will not end in a slash.
+        Will be "." for output to the root_build_dir.
+
+        This is subtly different than {{target_out_dir}} which is
+        defined by GN based on the target's path and not overridable.
+        {{output_dir}} is for the final output, {{target_out_dir}} is
+        generally for object files and other outputs.
+
+        Usually {{output_dir}} would be defined in terms of either
+        {{target_out_dir}} or {{root_out_dir}}
+
     {{output_extension}}
         The value of the "output_extension" variable in the target,
         or the value of the "default_output_extension" value in the
@@ -3030,6 +3084,9 @@
 
         These should generally be treated the same as libs by your tool.
         Example: "libfoo.so libbar.so"
+
+  The static library ("alink") tool allows {{arflags}} plus the common
+  tool substitutions.
 
   The copy tool allows the common compiler/linker substitutions, plus
   {{source}} which is the source of the copy. The stamp tool allows
@@ -3071,13 +3128,13 @@
     tool("solink") {
       command = "..."
       outputs = [
-        "{{root_out_dir}}/{{target_output_name}}{{output_extension}}",
-        "{{root_out_dir}}/{{target_output_name}}{{output_extension}}.TOC",
+        "{{output_dir}}/{{target_output_name}}{{output_extension}}",
+        "{{output_dir}}/{{target_output_name}}{{output_extension}}.TOC",
       ]
       link_output =
-        "{{root_out_dir}}/{{target_output_name}}{{output_extension}}"
+        "{{output_dir}}/{{target_output_name}}{{output_extension}}"
       depend_output =
-        "{{root_out_dir}}/{{target_output_name}}{{output_extension}}.TOC"
+        "{{output_dir}}/{{target_output_name}}{{output_extension}}.TOC"
       restat = true
     }
 
@@ -3691,6 +3748,42 @@
   group("a_b_shared_deps") {
     public_deps = [ ":c" ]
   }
+
+
+```
+## **arflags**: Arguments passed to static_library archiver.
+
+```
+  A list of flags passed to the archive/lib command that creates static
+  libraries.
+
+  arflags are NOT pushed to dependents, so applying arflags to source
+  sets or any other target type will be a no-op. As with ldflags,
+  you could put the arflags in a config and set that as a public or
+  "all dependent" config, but that will likely not be what you want.
+  If you have a chain of static libraries dependent on each other,
+  this can cause the flags to propagate up to other static libraries.
+  Due to the nature of how arflags are typically used, you will normally
+  want to apply them directly on static_library targets themselves.
+
+```
+
+### **Ordering of flags and values**
+
+```
+  1. Those set on the current target (not in a config).
+  2. Those set on the "configs" on the target in order that the
+     configs appear in the list.
+  3. Those set on the "all_dependent_configs" on the target in order
+     that the configs appear in the list.
+  4. Those set on the "public_configs" on the target in order that
+     those configs appear in the list.
+  5. all_dependent_configs pulled from dependencies, in the order of
+     the "deps" list. This is done recursively. If a config appears
+     more than once, only the first occurance will be used.
+  6. public_configs pulled from dependencies, in the order of the
+     "deps" list. If a dependency is public, they will be applied
+     recursively.
 
 
 ```
@@ -4656,6 +4749,36 @@
 
 
 ```
+## **output_dir**: [directory] Directory to put output file in.
+
+```
+  For library and executable targets, overrides the directory for the
+  final output. This must be in the root_build_dir or a child thereof.
+
+  This should generally be in the root_out_dir or a subdirectory thereof
+  (the root_out_dir will be the same as the root_build_dir for the
+  default toolchain, and will be a subdirectory for other toolchains).
+  Not putting the output in a subdirectory of root_out_dir can result
+  in collisions between different toolchains, so you will need to take
+  steps to ensure that your target is only present in one toolchain.
+
+  Normally the toolchain specifies the output directory for libraries
+  and executables (see "gn help tool"). You will have to consult that
+  for the default location. The default location will be used if
+  output_dir is undefined or empty.
+
+```
+
+### **Example**
+
+```
+  shared_library("doom_melon") {
+    output_dir = "$root_out_dir/plugin_libs"
+    ...
+  }
+
+
+```
 ## **output_extension**: Value to use for the output's file extension.
 
 ```
@@ -4664,9 +4787,11 @@
   override the name (for example to use "libfreetype.so.6" instead
   of libfreetype.so on Linux).
 
-  This value should not include a leading dot. If undefined or empty,
-  the default_output_extension specified on the tool will be used.
-  The output_extension will be used in the "{{output_extension}}"
+  This value should not include a leading dot. If undefined, the default
+  specified on the tool will be used. If set to the empty string, no
+  output extension will be used.
+
+  The output_extension will be used to set the "{{output_extension}}"
   expansion which the linker tool will generally use to specify the
   output file name. See "gn help tool".
 
@@ -4720,6 +4845,35 @@
 ```
   static_library("doom_melon") {
     output_name = "fluffy_bunny"
+  }
+
+
+```
+## **output_prefix_override**: Don't use prefix for output name.
+
+```
+  A boolean that overrides the output prefix for a target. Defaults to
+  false.
+
+  Some systems use prefixes for the names of the final target output
+  file. The normal example is "libfoo.so" on Linux for a target
+  named "foo".
+
+  The output prefix for a given target type is specified on the linker
+  tool (see "gn help tool"). Sometimes this prefix is undesired.
+
+  See also "gn help output_extension".
+
+```
+
+### **Example**
+
+```
+  shared_library("doom_melon") {
+    # Normally this will produce "libdoom_melon.so" on Linux, setting
+    # Setting this flag will produce "doom_melon.so".
+    output_prefix_override = true
+    ...
   }
 
 
@@ -5128,6 +5282,29 @@
   Any target in the current directory and any subdirectory thereof, plus
   any targets in "//bar/" and any subdirectory thereof.
     visibility = [ "./*", "//bar/*" ]
+
+
+```
+## **write_runtime_deps**: Writes the target's runtime_deps to the given path.
+
+```
+  Does not synchronously write the file, but rather schedules it
+  to be written at the end of generation.
+
+  If the file exists and the contents are identical to that being
+  written, the file will not be updated. This will prevent unnecessary
+  rebuilds of targets that depend on this file.
+
+  Path must be within the output directory.
+
+  See "gn help runtime_deps" for how the runtime dependencies are
+  computed.
+
+  The format of this file will list one file per line with no escaping.
+  The files will be relative to the root_build_dir. The first line of
+  the file will be the main output file of the target itself. The file
+  contents will be the same as requesting the runtime deps be written on
+  the command line (see "gn help --runtime-deps-list-file").
 
 
 ```
@@ -5561,8 +5738,8 @@
 ```
   Runtime dependencies of a target are exposed via the "runtime_deps"
   category of "gn desc" (see "gn help desc") or they can be written
-  at build generation time via "--runtime-deps-list-file"
-  (see "gn help --runtime-deps-list-file").
+  at build generation time via write_runtime_deps(), or
+  --runtime-deps-list-file (see "gn help --runtime-deps-list-file").
 
   To a first approximation, the runtime dependencies of a target are
   the set of "data" files, data directories, and the shared libraries
@@ -5666,6 +5843,10 @@
 ### **Placeholders**
 
 ```
+  This section discusses only placeholders for actions. There are other
+  placeholders used in the definition of tools. See "gn help tool" for
+  those.
+
   {{source}}
       The name of the source file including directory (*). This will
       generally be used for specifying inputs to a script in the
@@ -5766,7 +5947,8 @@
 **  \--args**: Specifies build arguments overrides.
 **  \--color**: Force colored output.
 **  \--dotfile**: Override the name of the ".gn" file.
-**  \--markdown**: write the output in the Markdown format.
+**  \--fail-on-unused-args**: Treat unused build args as fatal errors.
+**  \--markdown**: Write help output in the Markdown format.
 **  \--nocolor**: Force non-colored output.
 **  -q**: Quiet mode. Don't print output on success.
 **  \--root**: Explicitly specify source root.

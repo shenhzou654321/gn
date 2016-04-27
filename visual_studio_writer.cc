@@ -5,12 +5,13 @@
 #include "tools/gn/visual_studio_writer.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -180,9 +181,21 @@ VisualStudioWriter::SolutionProject::SolutionProject(
     const std::string& _config_platform)
     : SolutionEntry(_name, _path, _guid),
       label_dir_path(_label_dir_path),
-      config_platform(_config_platform) {}
+      config_platform(_config_platform) {
+  // Make sure all paths use the same drive letter case. This is especially
+  // important when searching for the common path prefix.
+  label_dir_path[0] = base::ToUpperASCII(label_dir_path[0]);
+}
 
 VisualStudioWriter::SolutionProject::~SolutionProject() = default;
+
+VisualStudioWriter::SourceFileCompileTypePair::SourceFileCompileTypePair(
+    const SourceFile* _file,
+    const char* _compile_type)
+    : file(_file), compile_type(_compile_type) {}
+
+VisualStudioWriter::SourceFileCompileTypePair::~SourceFileCompileTypePair() =
+    default;
 
 VisualStudioWriter::VisualStudioWriter(const BuildSettings* build_settings,
                                        const char* config_platform,
@@ -211,8 +224,6 @@ VisualStudioWriter::VisualStudioWriter(const BuildSettings* build_settings,
 }
 
 VisualStudioWriter::~VisualStudioWriter() {
-  STLDeleteContainerPointers(projects_.begin(), projects_.end());
-  STLDeleteContainerPointers(folders_.begin(), folders_.end());
 }
 
 // static
@@ -281,7 +292,8 @@ bool VisualStudioWriter::RunAndWriteFiles(const BuildSettings* build_settings,
   // Sort projects so they appear always in the same order in solution file.
   // Otherwise solution file is rewritten and reloaded by Visual Studio.
   std::sort(writer.projects_.begin(), writer.projects_.end(),
-            [](const SolutionEntry* a, const SolutionEntry* b) {
+            [](const std::unique_ptr<SolutionProject>& a,
+               const std::unique_ptr<SolutionProject>& b) {
               return a->path < b->path;
             });
 
@@ -310,15 +322,16 @@ bool VisualStudioWriter::WriteProjectFiles(const Target* target, Err* err) {
   base::FilePath vcxproj_path = build_settings_->GetFullPath(target_file);
   std::string vcxproj_path_str = FilePathToUTF8(vcxproj_path);
 
-  projects_.push_back(new SolutionProject(
+  projects_.emplace_back(new SolutionProject(
       project_name, vcxproj_path_str,
       MakeGuid(vcxproj_path_str, kGuidSeedProject),
       FilePathToUTF8(build_settings_->GetFullPath(target->label().dir())),
       project_config_platform));
 
   std::stringstream vcxproj_string_out;
+  SourceFileCompileTypePairs source_types;
   if (!WriteProjectFileContents(vcxproj_string_out, *projects_.back(), target,
-                                err)) {
+                                &source_types, err)) {
     projects_.pop_back();
     return false;
   }
@@ -331,7 +344,7 @@ bool VisualStudioWriter::WriteProjectFiles(const Target* target, Err* err) {
 
   base::FilePath filters_path = UTF8ToFilePath(vcxproj_path_str + ".filters");
   std::stringstream filters_string_out;
-  WriteFiltersFileContents(filters_string_out, target);
+  WriteFiltersFileContents(filters_string_out, target, source_types);
   return WriteFileIfChanged(filters_path, filters_string_out.str(), err);
 }
 
@@ -339,6 +352,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
     std::ostream& out,
     const SolutionProject& solution_project,
     const Target* target,
+    SourceFileCompileTypePairs* source_types,
     Err* err) {
   PathOutput path_output(GetTargetOutputDir(target),
                          build_settings_->root_path_utf8(),
@@ -352,19 +366,20 @@ bool VisualStudioWriter::WriteProjectFileContents(
           .add("xmlns", "http://schemas.microsoft.com/developer/msbuild/2003"));
 
   {
-    scoped_ptr<XmlElementWriter> configurations = project.SubElement(
+    std::unique_ptr<XmlElementWriter> configurations = project.SubElement(
         "ItemGroup", XmlAttributes("Label", "ProjectConfigurations"));
-    scoped_ptr<XmlElementWriter> project_config = configurations->SubElement(
-        "ProjectConfiguration",
-        XmlAttributes("Include", std::string(kConfigurationName) + '|' +
-                                     solution_project.config_platform));
+    std::unique_ptr<XmlElementWriter> project_config =
+        configurations->SubElement(
+            "ProjectConfiguration",
+            XmlAttributes("Include", std::string(kConfigurationName) + '|' +
+                                         solution_project.config_platform));
     project_config->SubElement("Configuration")->Text(kConfigurationName);
     project_config->SubElement("Platform")
         ->Text(solution_project.config_platform);
   }
 
   {
-    scoped_ptr<XmlElementWriter> globals =
+    std::unique_ptr<XmlElementWriter> globals =
         project.SubElement("PropertyGroup", XmlAttributes("Label", "Globals"));
     globals->SubElement("ProjectGuid")->Text(solution_project.guid);
     globals->SubElement("Keyword")->Text("Win32Proj");
@@ -378,7 +393,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
                               "$(VCTargetsPath)\\Microsoft.Cpp.Default.props"));
 
   {
-    scoped_ptr<XmlElementWriter> configuration = project.SubElement(
+    std::unique_ptr<XmlElementWriter> configuration = project.SubElement(
         "PropertyGroup", XmlAttributes("Label", "Configuration"));
     configuration->SubElement("CharacterSet")->Text("Unicode");
     std::string configuration_type = GetConfigurationType(target, err);
@@ -388,7 +403,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
   }
 
   {
-    scoped_ptr<XmlElementWriter> locals =
+    std::unique_ptr<XmlElementWriter> locals =
         project.SubElement("PropertyGroup", XmlAttributes("Label", "Locals"));
     locals->SubElement("PlatformToolset")->Text(toolset_version_);
   }
@@ -404,7 +419,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
                      XmlAttributes("Label", "ExtensionSettings"));
 
   {
-    scoped_ptr<XmlElementWriter> property_sheets = project.SubElement(
+    std::unique_ptr<XmlElementWriter> property_sheets = project.SubElement(
         "ImportGroup", XmlAttributes("Label", "PropertySheets"));
     property_sheets->SubElement(
         "Import",
@@ -419,10 +434,11 @@ bool VisualStudioWriter::WriteProjectFileContents(
   project.SubElement("PropertyGroup", XmlAttributes("Label", "UserMacros"));
 
   {
-    scoped_ptr<XmlElementWriter> properties =
+    std::unique_ptr<XmlElementWriter> properties =
         project.SubElement("PropertyGroup");
     {
-      scoped_ptr<XmlElementWriter> out_dir = properties->SubElement("OutDir");
+      std::unique_ptr<XmlElementWriter> out_dir =
+          properties->SubElement("OutDir");
       path_output.WriteDir(out_dir->StartContent(false),
                            build_settings_->build_dir(),
                            PathOutput::DIR_NO_LAST_SLASH);
@@ -435,13 +451,13 @@ bool VisualStudioWriter::WriteProjectFileContents(
   }
 
   {
-    scoped_ptr<XmlElementWriter> item_definitions =
+    std::unique_ptr<XmlElementWriter> item_definitions =
         project.SubElement("ItemDefinitionGroup");
     {
-      scoped_ptr<XmlElementWriter> cl_compile =
+      std::unique_ptr<XmlElementWriter> cl_compile =
           item_definitions->SubElement("ClCompile");
       {
-        scoped_ptr<XmlElementWriter> include_dirs =
+        std::unique_ptr<XmlElementWriter> include_dirs =
             cl_compile->SubElement("AdditionalIncludeDirectories");
         RecursiveTargetConfigToStream<SourceDir>(
             target, &ConfigValues::include_dirs, IncludeDirWriter(path_output),
@@ -475,15 +491,9 @@ bool VisualStudioWriter::WriteProjectFileContents(
       cl_compile->SubElement("MinimalRebuild")->Text("false");
       if (!options.optimization.empty())
         cl_compile->SubElement("Optimization")->Text(options.optimization);
-      if (target->config_values().has_precompiled_headers()) {
-        cl_compile->SubElement("PrecompiledHeader")->Text("Use");
-        cl_compile->SubElement("PrecompiledHeaderFile")
-            ->Text(target->config_values().precompiled_header());
-      } else {
-        cl_compile->SubElement("PrecompiledHeader")->Text("NotUsing");
-      }
+      cl_compile->SubElement("PrecompiledHeader")->Text("NotUsing");
       {
-        scoped_ptr<XmlElementWriter> preprocessor_definitions =
+        std::unique_ptr<XmlElementWriter> preprocessor_definitions =
             cl_compile->SubElement("PreprocessorDefinitions");
         RecursiveTargetConfigToStream<std::string>(
             target, &ConfigValues::defines, SemicolonSeparatedWriter(),
@@ -505,23 +515,26 @@ bool VisualStudioWriter::WriteProjectFileContents(
   }
 
   {
-    scoped_ptr<XmlElementWriter> group = project.SubElement("ItemGroup");
-    if (!target->config_values().precompiled_source().is_null()) {
-      group
-          ->SubElement(
-              "ClCompile", "Include",
-              SourceFileWriter(path_output,
-                               target->config_values().precompiled_source()))
-          ->SubElement("PrecompiledHeader")
-          ->Text("Create");
-    }
+    std::unique_ptr<XmlElementWriter> group = project.SubElement("ItemGroup");
+    std::vector<OutputFile> tool_outputs;  // Prevent reallocation in loop.
 
     for (const SourceFile& file : target->sources()) {
-      SourceFileType type = GetSourceFileType(file);
-      if (type == SOURCE_H || type == SOURCE_CPP || type == SOURCE_C) {
-        group->SubElement(type == SOURCE_H ? "ClInclude" : "ClCompile",
-                          "Include", SourceFileWriter(path_output, file));
+      const char* compile_type;
+      Toolchain::ToolType tool_type = Toolchain::TYPE_NONE;
+      if (target->GetOutputFilesForSource(file, &tool_type, &tool_outputs)) {
+        compile_type = "CustomBuild";
+        std::unique_ptr<XmlElementWriter> build = group->SubElement(
+            compile_type, "Include", SourceFileWriter(path_output, file));
+        build->SubElement("Command")->Text("call ninja.exe -C $(OutDir) " +
+                                           tool_outputs[0].value());
+        build->SubElement("Outputs")->Text("$(OutDir)" +
+                                           tool_outputs[0].value());
+      } else {
+        compile_type = "None";
+        group->SubElement(compile_type, "Include",
+                          SourceFileWriter(path_output, file));
       }
+      source_types->push_back(SourceFileCompileTypePair(&file, compile_type));
     }
   }
 
@@ -537,7 +550,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
   std::string ninja_target = GetNinjaTarget(target);
 
   {
-    scoped_ptr<XmlElementWriter> build =
+    std::unique_ptr<XmlElementWriter> build =
         project.SubElement("Target", XmlAttributes("Name", "Build"));
     build->SubElement(
         "Exec", XmlAttributes("Command",
@@ -545,7 +558,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
   }
 
   {
-    scoped_ptr<XmlElementWriter> clean =
+    std::unique_ptr<XmlElementWriter> clean =
         project.SubElement("Target", XmlAttributes("Name", "Clean"));
     clean->SubElement(
         "Exec",
@@ -556,8 +569,10 @@ bool VisualStudioWriter::WriteProjectFileContents(
   return true;
 }
 
-void VisualStudioWriter::WriteFiltersFileContents(std::ostream& out,
-                                                  const Target* target) {
+void VisualStudioWriter::WriteFiltersFileContents(
+    std::ostream& out,
+    const Target* target,
+    const SourceFileCompileTypePairs& source_types) {
   out << "<?xml version=\"1.0\" encoding=\"utf-8\"?>" << std::endl;
   XmlElementWriter project(
       out, "Project",
@@ -567,7 +582,7 @@ void VisualStudioWriter::WriteFiltersFileContents(std::ostream& out,
   std::ostringstream files_out;
 
   {
-    scoped_ptr<XmlElementWriter> filters_group =
+    std::unique_ptr<XmlElementWriter> filters_group =
         project.SubElement("ItemGroup");
     XmlElementWriter files_group(files_out, "ItemGroup", XmlAttributes(), 2);
 
@@ -583,35 +598,31 @@ void VisualStudioWriter::WriteFiltersFileContents(std::ostream& out,
 
     std::set<std::string> processed_filters;
 
-    for (const SourceFile& file : target->sources()) {
-      SourceFileType type = GetSourceFileType(file);
-      if (type == SOURCE_H || type == SOURCE_CPP || type == SOURCE_C) {
-        scoped_ptr<XmlElementWriter> cl_item = files_group.SubElement(
-            type == SOURCE_H ? "ClInclude" : "ClCompile", "Include",
-            SourceFileWriter(file_path_output, file));
+    for (const auto& file_and_type : source_types) {
+      std::unique_ptr<XmlElementWriter> cl_item = files_group.SubElement(
+          file_and_type.compile_type, "Include",
+          SourceFileWriter(file_path_output, *file_and_type.file));
 
-        std::ostringstream target_relative_out;
-        filter_path_output.WriteFile(target_relative_out, file);
-        std::string target_relative_path = target_relative_out.str();
-        ConvertPathToSystem(&target_relative_path);
-        base::StringPiece filter_path = FindParentDir(&target_relative_path);
+      std::ostringstream target_relative_out;
+      filter_path_output.WriteFile(target_relative_out, *file_and_type.file);
+      std::string target_relative_path = target_relative_out.str();
+      ConvertPathToSystem(&target_relative_path);
+      base::StringPiece filter_path = FindParentDir(&target_relative_path);
 
-        if (!filter_path.empty()) {
-          std::string filter_path_str = filter_path.as_string();
-          while (processed_filters.find(filter_path_str) ==
-                 processed_filters.end()) {
-            auto it = processed_filters.insert(filter_path_str).first;
-            filters_group
-                ->SubElement("Filter",
-                             XmlAttributes("Include", filter_path_str))
-                ->SubElement("UniqueIdentifier")
-                ->Text(MakeGuid(filter_path_str, kGuidSeedFilter));
-            filter_path_str = FindParentDir(&(*it)).as_string();
-            if (filter_path_str.empty())
-              break;
-          }
-          cl_item->SubElement("Filter")->Text(filter_path);
+      if (!filter_path.empty()) {
+        std::string filter_path_str = filter_path.as_string();
+        while (processed_filters.find(filter_path_str) ==
+               processed_filters.end()) {
+          auto it = processed_filters.insert(filter_path_str).first;
+          filters_group
+              ->SubElement("Filter", XmlAttributes("Include", filter_path_str))
+              ->SubElement("UniqueIdentifier")
+              ->Text(MakeGuid(filter_path_str, kGuidSeedFilter));
+          filter_path_str = FindParentDir(&(*it)).as_string();
+          if (filter_path_str.empty())
+            break;
         }
+        cl_item->SubElement("Filter")->Text(filter_path);
       }
     }
   }
@@ -646,14 +657,14 @@ void VisualStudioWriter::WriteSolutionFileContents(
   out << "# " << version_string_ << std::endl;
 
   SourceDir solution_dir(FilePathToUTF8(solution_dir_path));
-  for (const SolutionEntry* folder : folders_) {
+  for (const std::unique_ptr<SolutionEntry>& folder : folders_) {
     out << "Project(\"" << kGuidTypeFolder << "\") = \"(" << folder->name
         << ")\", \"" << RebasePath(folder->path, solution_dir) << "\", \""
         << folder->guid << "\"" << std::endl;
     out << "EndProject" << std::endl;
   }
 
-  for (const SolutionEntry* project : projects_) {
+  for (const std::unique_ptr<SolutionProject>& project : projects_) {
     out << "Project(\"" << kGuidTypeProject << "\") = \"" << project->name
         << "\", \"" << RebasePath(project->path, solution_dir) << "\", \""
         << project->guid << "\"" << std::endl;
@@ -671,7 +682,7 @@ void VisualStudioWriter::WriteSolutionFileContents(
 
   out << "\tGlobalSection(ProjectConfigurationPlatforms) = postSolution"
       << std::endl;
-  for (const SolutionProject* project : projects_) {
+  for (const std::unique_ptr<SolutionProject>& project : projects_) {
     const std::string project_config_mode =
         config_mode_prefix + project->config_platform;
     out << "\t\t" << project->guid << '.' << config_mode
@@ -686,13 +697,13 @@ void VisualStudioWriter::WriteSolutionFileContents(
   out << "\tEndGlobalSection" << std::endl;
 
   out << "\tGlobalSection(NestedProjects) = preSolution" << std::endl;
-  for (const SolutionEntry* folder : folders_) {
+  for (const std::unique_ptr<SolutionEntry>& folder : folders_) {
     if (folder->parent_folder) {
       out << "\t\t" << folder->guid << " = " << folder->parent_folder->guid
           << std::endl;
     }
   }
-  for (const SolutionEntry* project : projects_) {
+  for (const std::unique_ptr<SolutionProject>& project : projects_) {
     out << "\t\t" << project->guid << " = " << project->parent_folder->guid
         << std::endl;
   }
@@ -706,7 +717,7 @@ void VisualStudioWriter::ResolveSolutionFolders() {
 
   // Get all project directories. Create solution folder for each directory.
   std::map<base::StringPiece, SolutionEntry*> processed_paths;
-  for (SolutionProject* project : projects_) {
+  for (const std::unique_ptr<SolutionProject>& project : projects_) {
     base::StringPiece folder_path = project->label_dir_path;
     if (IsSlash(folder_path[folder_path.size() - 1]))
       folder_path = folder_path.substr(0, folder_path.size() - 1);
@@ -715,12 +726,12 @@ void VisualStudioWriter::ResolveSolutionFolders() {
       project->parent_folder = it->second;
     } else {
       std::string folder_path_str = folder_path.as_string();
-      SolutionEntry* folder = new SolutionEntry(
+      std::unique_ptr<SolutionEntry> folder(new SolutionEntry(
           FindLastDirComponent(SourceDir(folder_path)).as_string(),
-          folder_path_str, MakeGuid(folder_path_str, kGuidSeedFolder));
-      folders_.push_back(folder);
-      project->parent_folder = folder;
-      processed_paths[folder_path] = folder;
+          folder_path_str, MakeGuid(folder_path_str, kGuidSeedFolder)));
+      project->parent_folder = folder.get();
+      processed_paths[folder_path] = folder.get();
+      folders_.push_back(std::move(folder));
 
       if (root_folder_path_.empty()) {
         root_folder_path_ = folder_path_str;
@@ -749,38 +760,42 @@ void VisualStudioWriter::ResolveSolutionFolders() {
 
   // Create also all parent folders up to |root_folder_path_|.
   SolutionFolders additional_folders;
-  for (SolutionEntry* folder : folders_) {
-    if (folder->path == root_folder_path_)
+  for (const std::unique_ptr<SolutionEntry>& solution_folder : folders_) {
+    if (solution_folder->path == root_folder_path_)
       continue;
 
+    SolutionEntry* folder = solution_folder.get();
     base::StringPiece parent_path;
     while ((parent_path = FindParentDir(&folder->path)) != root_folder_path_) {
       auto it = processed_paths.find(parent_path);
       if (it != processed_paths.end()) {
         folder = it->second;
       } else {
-        folder = new SolutionEntry(
+        std::unique_ptr<SolutionEntry> new_folder(new SolutionEntry(
             FindLastDirComponent(SourceDir(parent_path)).as_string(),
             parent_path.as_string(),
-            MakeGuid(parent_path.as_string(), kGuidSeedFolder));
-        additional_folders.push_back(folder);
-        processed_paths[parent_path] = folder;
+            MakeGuid(parent_path.as_string(), kGuidSeedFolder)));
+        processed_paths[parent_path] = new_folder.get();
+        folder = new_folder.get();
+        additional_folders.push_back(std::move(new_folder));
       }
     }
   }
-  folders_.insert(folders_.end(), additional_folders.begin(),
-                  additional_folders.end());
+  folders_.insert(folders_.end(),
+                  std::make_move_iterator(additional_folders.begin()),
+                  std::make_move_iterator(additional_folders.end()));
 
   // Sort folders by path.
   std::sort(folders_.begin(), folders_.end(),
-            [](const SolutionEntry* a, const SolutionEntry* b) {
+            [](const std::unique_ptr<SolutionEntry>& a,
+               const std::unique_ptr<SolutionEntry>& b) {
               return a->path < b->path;
             });
 
   // Match subfolders with their parents. Since |folders_| are sorted by path we
   // know that parent folder always precedes its children in vector.
-  SolutionFolders parents;
-  for (SolutionEntry* folder : folders_) {
+  std::vector<SolutionEntry*> parents;
+  for (const std::unique_ptr<SolutionEntry>& folder : folders_) {
     while (!parents.empty()) {
       if (base::StartsWith(folder->path, parents.back()->path,
                            base::CompareCase::SENSITIVE)) {
@@ -790,7 +805,7 @@ void VisualStudioWriter::ResolveSolutionFolders() {
         parents.pop_back();
       }
     }
-    parents.push_back(folder);
+    parents.push_back(folder.get());
   }
 }
 

@@ -119,6 +119,19 @@ def build_gn_with_ninja_manually(tempdir, options):
   root_gen_dir = os.path.join(tempdir, 'gen')
   mkdir_p(root_gen_dir)
 
+  mkdir_p(os.path.join(root_gen_dir, 'base', 'allocator'))
+  with tempfile.NamedTemporaryFile() as f:
+    f.write('--flags USE_EXPERIMENTAL_ALLOCATOR_SHIM=%s'
+            % ('true' if is_linux else 'false'))
+    f.flush()
+
+    check_call([
+        os.path.join(SRC_ROOT, 'build', 'write_buildflag_header.py'),
+        '--output', 'base/allocator/features.h',
+        '--gen-dir', root_gen_dir,
+        '--definitions', f.name,
+    ])
+
   if is_mac:
     # //base/build_time.cc needs base/generated_build_date.h,
     # and this file is only included for Mac builds.
@@ -156,13 +169,18 @@ def write_ninja(path, root_gen_dir, options):
     else:
       cflags.extend(['-O2', '-g0'])
 
-    cflags.extend(['-D_FILE_OFFSET_BITS=64', '-pthread', '-pipe'])
+    cflags.extend([
+        '-D_FILE_OFFSET_BITS=64',
+        '-pthread',
+        '-pipe',
+        '-fno-exceptions'
+    ])
     cflags_cc.extend(['-std=c++11', '-Wno-c++11-narrowing'])
 
   static_libraries = {
-      'base': {'sources': [], 'tool': 'cxx'},
-      'dynamic_annotations': {'sources': [], 'tool': 'cc'},
-      'gn': {'sources': [], 'tool': 'cxx'},
+      'base': {'sources': [], 'tool': 'cxx', 'include_dirs': []},
+      'dynamic_annotations': {'sources': [], 'tool': 'cc', 'include_dirs': []},
+      'gn': {'sources': [], 'tool': 'cxx', 'include_dirs': []},
   }
 
   for name in os.listdir(GN_ROOT):
@@ -181,6 +199,7 @@ def write_ninja(path, root_gen_dir, options):
       'base/third_party/superfasthash/superfasthash.c',
   ])
   static_libraries['base']['sources'].extend([
+      'base/allocator/allocator_check.cc',
       'base/allocator/allocator_extension.cc',
       'base/at_exit.cc',
       'base/base_paths.cc',
@@ -278,6 +297,8 @@ def write_ninja(path, root_gen_dir, options):
       'base/timer/timer.cc',
       'base/trace_event/heap_profiler_allocation_context.cc',
       'base/trace_event/heap_profiler_allocation_context_tracker.cc',
+      'base/trace_event/heap_profiler_allocation_register.cc',
+      'base/trace_event/heap_profiler_heap_dump_writer.cc',
       'base/trace_event/heap_profiler_stack_frame_deduplicator.cc',
       'base/trace_event/heap_profiler_type_name_deduplicator.cc',
       'base/trace_event/memory_allocator_dump.cc',
@@ -330,6 +351,7 @@ def write_ninja(path, root_gen_dir, options):
         'base/threading/thread_local_storage_posix.cc',
         'base/threading/worker_pool_posix.cc',
         'base/time/time_posix.cc',
+        'base/trace_event/heap_profiler_allocation_register_posix.cc',
     ])
     static_libraries['libevent'] = {
         'sources': [
@@ -392,6 +414,8 @@ def write_ninja(path, root_gen_dir, options):
         'tool': 'cxx',
     }
     static_libraries['base']['sources'].extend([
+        'base/allocator/allocator_shim.cc',
+        'base/allocator/allocator_shim_default_dispatch_to_glibc.cc',
         'base/memory/shared_memory_posix.cc',
         'base/nix/xdg_util.cc',
         'base/process/internal_linux.cc',

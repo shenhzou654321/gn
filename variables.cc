@@ -418,6 +418,25 @@ const char kAllowCircularIncludesFrom_Help[] =
     "    public_deps = [ \":c\" ]\n"
     "  }\n";
 
+const char kArflags[] = "arflags";
+const char kArflags_HelpShort[] =
+    "arflags: [string list] Arguments passed to static_library archiver.";
+const char kArflags_Help[] =
+    "arflags: Arguments passed to static_library archiver.\n"
+    "\n"
+    "  A list of flags passed to the archive/lib command that creates static\n"
+    "  libraries.\n"
+    "\n"
+    "  arflags are NOT pushed to dependents, so applying arflags to source\n"
+    "  sets or any other target type will be a no-op. As with ldflags,\n"
+    "  you could put the arflags in a config and set that as a public or\n"
+    "  \"all dependent\" config, but that will likely not be what you want.\n"
+    "  If you have a chain of static libraries dependent on each other,\n"
+    "  this can cause the flags to propagate up to other static libraries.\n"
+    "  Due to the nature of how arflags are typically used, you will normally\n"
+    "  want to apply them directly on static_library targets themselves.\n"
+    COMMON_ORDERING_HELP;
+
 const char kArgs[] = "args";
 const char kArgs_HelpShort[] =
     "args: [string list] Arguments passed to an action.";
@@ -645,9 +664,16 @@ const char kCompleteStaticLib_Help[] =
     "  In some cases the static library might be the final desired output.\n"
     "  For example, you may be producing a static library for distribution to\n"
     "  third parties. In this case, the static library should include code\n"
-    "  for all dependencies in one complete package. Since GN does not unpack\n"
-    "  static libraries to forward their contents up the dependency chain,\n"
-    "  it is an error for complete static libraries to depend on other static\n"
+    "  for all dependencies in one complete package. However, complete static\n"
+    "  libraries themselves are never linked into other complete static\n"
+    "  libraries. All complete static libraries are for distribution and\n"
+    "  linking them in would cause code duplication in this case. If the\n"
+    "  static library is not for distribution, it should not be complete.\n"
+    "\n"
+    "  GN treats non-complete static libraries as source sets when they are\n"
+    "  linked into complete static libraries. This is done because some tools\n"
+    "  like AR do not handle dependent static libraries properly. This makes\n"
+    "  it easier to write \"alink\" rules.\n"
     "\n"
     "  In rare cases it makes sense to list a header in more than one\n"
     "  target if it could be considered conceptually a member of both.\n"
@@ -737,7 +763,7 @@ const char kConfigs_Help[] =
 
 const char kConsole[] = "console";
 const char kConsole_HelpShort[] =
-    "console [boolean]: Run this action in the console pool.";
+    "console: [boolean] Run this action in the console pool.";
 const char kConsole_Help[] =
     "console: Run this action in the console pool.\n"
     "\n"
@@ -781,7 +807,7 @@ const char kData_Help[] =
     "  generated files both in the \"outputs\" list as well as the \"data\"\n"
     "  list.\n"
     "\n"
-    "  By convention, directories are be listed with a trailing slash:\n"
+    "  By convention, directories are listed with a trailing slash:\n"
     "    data = [ \"test/data/\" ]\n"
     "  However, no verification is done on these so GN doesn't enforce this.\n"
     "  The paths are just rebased and passed along when requested.\n"
@@ -1092,9 +1118,11 @@ const char kOutputExtension_Help[] =
     "  override the name (for example to use \"libfreetype.so.6\" instead\n"
     "  of libfreetype.so on Linux).\n"
     "\n"
-    "  This value should not include a leading dot. If undefined or empty,\n"
-    "  the default_output_extension specified on the tool will be used.\n"
-    "  The output_extension will be used in the \"{{output_extension}}\"\n"
+    "  This value should not include a leading dot. If undefined, the default\n"
+    "  specified on the tool will be used. If set to the empty string, no\n"
+    "  output extension will be used.\n"
+    "\n"
+    "  The output_extension will be used to set the \"{{output_extension}}\"\n"
     "  expansion which the linker tool will generally use to specify the\n"
     "  output file name. See \"gn help tool\".\n"
     "\n"
@@ -1115,6 +1143,34 @@ const char kOutputExtension_Help[] =
     "      output_extension = \"cpl\"\n"
     "      ...\n"
     "    }\n"
+    "  }\n";
+
+const char kOutputDir[] = "output_dir";
+const char kOutputDir_HelpShort[] =
+    "output_dir: [directory] Directory to put output file in.";
+const char kOutputDir_Help[] =
+    "output_dir: [directory] Directory to put output file in.\n"
+    "\n"
+    "  For library and executable targets, overrides the directory for the\n"
+    "  final output. This must be in the root_build_dir or a child thereof.\n"
+    "\n"
+    "  This should generally be in the root_out_dir or a subdirectory thereof\n"
+    "  (the root_out_dir will be the same as the root_build_dir for the\n"
+    "  default toolchain, and will be a subdirectory for other toolchains).\n"
+    "  Not putting the output in a subdirectory of root_out_dir can result\n"
+    "  in collisions between different toolchains, so you will need to take\n"
+    "  steps to ensure that your target is only present in one toolchain.\n"
+    "\n"
+    "  Normally the toolchain specifies the output directory for libraries\n"
+    "  and executables (see \"gn help tool\"). You will have to consult that\n"
+    "  for the default location. The default location will be used if\n"
+    "  output_dir is undefined or empty.\n"
+    "\n"
+    "Example\n"
+    "\n"
+    "  shared_library(\"doom_melon\") {\n"
+    "    output_dir = \"$root_out_dir/plugin_libs\"\n"
+    "    ...\n"
     "  }\n";
 
 const char kOutputName[] = "output_name";
@@ -1143,6 +1199,33 @@ const char kOutputName_Help[] =
     "\n"
     "  static_library(\"doom_melon\") {\n"
     "    output_name = \"fluffy_bunny\"\n"
+    "  }\n";
+
+const char kOutputPrefixOverride[] = "output_prefix_override";
+const char kOutputPrefixOverride_HelpShort[] =
+    "output_prefix_override: [boolean] Don't use prefix for output name.";
+const char kOutputPrefixOverride_Help[] =
+    "output_prefix_override: Don't use prefix for output name.\n"
+    "\n"
+    "  A boolean that overrides the output prefix for a target. Defaults to\n"
+    "  false.\n"
+    "\n"
+    "  Some systems use prefixes for the names of the final target output\n"
+    "  file. The normal example is \"libfoo.so\" on Linux for a target\n"
+    "  named \"foo\".\n"
+    "\n"
+    "  The output prefix for a given target type is specified on the linker\n"
+    "  tool (see \"gn help tool\"). Sometimes this prefix is undesired.\n"
+    "\n"
+    "  See also \"gn help output_extension\".\n"
+    "\n"
+    "Example\n"
+    "\n"
+    "  shared_library(\"doom_melon\") {\n"
+    "    # Normally this will produce \"libdoom_melon.so\" on Linux, setting\n"
+    "    # Setting this flag will produce \"doom_melon.so\".\n"
+    "    output_prefix_override = true\n"
+    "    ...\n"
     "  }\n";
 
 const char kOutputs[] = "outputs";
@@ -1516,6 +1599,30 @@ const char kVisibility_Help[] =
     "  any targets in \"//bar/\" and any subdirectory thereof.\n"
     "    visibility = [ \"./*\", \"//bar/*\" ]\n";
 
+const char kWriteRuntimeDeps[] = "write_runtime_deps";
+const char kWriteRuntimeDeps_HelpShort[] =
+    "write_runtime_deps: Writes the target's runtime_deps to the given path.";
+const char kWriteRuntimeDeps_Help[] =
+    "write_runtime_deps: Writes the target's runtime_deps to the given path.\n"
+    "\n"
+    "  Does not synchronously write the file, but rather schedules it\n"
+    "  to be written at the end of generation.\n"
+    "\n"
+    "  If the file exists and the contents are identical to that being\n"
+    "  written, the file will not be updated. This will prevent unnecessary\n"
+    "  rebuilds of targets that depend on this file.\n"
+    "\n"
+    "  Path must be within the output directory.\n"
+    "\n"
+    "  See \"gn help runtime_deps\" for how the runtime dependencies are\n"
+    "  computed.\n"
+    "\n"
+    "  The format of this file will list one file per line with no escaping.\n"
+    "  The files will be relative to the root_build_dir. The first line of\n"
+    "  the file will be the main output file of the target itself. The file\n"
+    "  contents will be the same as requesting the runtime deps be written on\n"
+    "  the command line (see \"gn help --runtime-deps-list-file\").\n";
+
 // -----------------------------------------------------------------------------
 
 VariableInfo::VariableInfo()
@@ -1557,6 +1664,7 @@ const VariableInfoMap& GetTargetVariables() {
   if (info_map.empty()) {
     INSERT_VARIABLE(AllDependentConfigs)
     INSERT_VARIABLE(AllowCircularIncludesFrom)
+    INSERT_VARIABLE(Arflags)
     INSERT_VARIABLE(Args)
     INSERT_VARIABLE(Asmflags)
     INSERT_VARIABLE(AssertNoDeps)
@@ -1583,8 +1691,10 @@ const VariableInfoMap& GetTargetVariables() {
     INSERT_VARIABLE(Ldflags)
     INSERT_VARIABLE(Libs)
     INSERT_VARIABLE(LibDirs)
+    INSERT_VARIABLE(OutputDir)
     INSERT_VARIABLE(OutputExtension)
     INSERT_VARIABLE(OutputName)
+    INSERT_VARIABLE(OutputPrefixOverride)
     INSERT_VARIABLE(Outputs)
     INSERT_VARIABLE(PrecompiledHeader)
     INSERT_VARIABLE(PrecompiledSource)
@@ -1596,6 +1706,7 @@ const VariableInfoMap& GetTargetVariables() {
     INSERT_VARIABLE(Sources)
     INSERT_VARIABLE(Testonly)
     INSERT_VARIABLE(Visibility)
+    INSERT_VARIABLE(WriteRuntimeDeps)
   }
   return info_map;
 }

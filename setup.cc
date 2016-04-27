@@ -140,7 +140,7 @@ base::FilePath FindDotFile(const base::FilePath& current_dir) {
 // Called on any thread. Post the item to the builder on the main thread.
 void ItemDefinedCallback(base::MessageLoop* main_loop,
                          scoped_refptr<Builder> builder,
-                         scoped_ptr<Item> item) {
+                         std::unique_ptr<Item> item) {
   DCHECK(item);
   main_loop->PostTask(FROM_HERE, base::Bind(&Builder::ItemDefined, builder,
                                             base::Passed(&item)));
@@ -199,7 +199,7 @@ base::FilePath FindWindowsPython() {
   DWORD path_length = ::GetEnvironmentVariable(kPathEnvVarName, nullptr, 0);
   if (path_length == 0)
     return base::FilePath();
-  scoped_ptr<base::char16[]> full_path(new base::char16[path_length]);
+  std::unique_ptr<base::char16[]> full_path(new base::char16[path_length]);
   DWORD actual_path_length =
       ::GetEnvironmentVariable(kPathEnvVarName, full_path.get(), path_length);
   CHECK_EQ(path_length, actual_path_length + 1);
@@ -332,9 +332,13 @@ bool Setup::RunPostMessageLoop() {
     }
 
     if (!build_settings_.build_args().VerifyAllOverridesUsed(&err)) {
-      // TODO(brettw) implement a system of warnings. Until we have a better
-      // system, print the error but don't return failure.
+      // TODO(brettw) implement a system to have a different marker for
+      // warnings. Until we have a better system, print the error but don't
+      // return failure unless requested on the command line.
       err.PrintToStdout();
+      if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+              switches::kFailOnUnusedArgs))
+        return false;
       return true;
     }
   }
@@ -712,7 +716,7 @@ bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
       err.PrintToStdout();
       return false;
     }
-    scoped_ptr<std::set<SourceFile>> whitelist(new std::set<SourceFile>);
+    std::unique_ptr<std::set<SourceFile>> whitelist(new std::set<SourceFile>);
     for (const auto& item : exec_script_whitelist_value->list_value()) {
       if (!item.VerifyTypeIs(Value::STRING, &err)) {
         err.PrintToStdout();

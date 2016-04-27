@@ -79,6 +79,10 @@ extern const char kAllowCircularIncludesFrom[];
 extern const char kAllowCircularIncludesFrom_HelpShort[];
 extern const char kAllowCircularIncludesFrom_Help[];
 
+extern const char kArflags[];
+extern const char kArflags_HelpShort[];
+extern const char kArflags_Help[];
+
 extern const char kArgs[];
 extern const char kArgs_HelpShort[];
 extern const char kArgs_Help[];
@@ -183,6 +187,10 @@ extern const char kLibs[];
 extern const char kLibs_HelpShort[];
 extern const char kLibs_Help[];
 
+extern const char kOutputDir[];
+extern const char kOutputDir_HelpShort[];
+extern const char kOutputDir_Help[];
+
 extern const char kOutputExtension[];
 extern const char kOutputExtension_HelpShort[];
 extern const char kOutputExtension_Help[];
@@ -190,6 +198,10 @@ extern const char kOutputExtension_Help[];
 extern const char kOutputName[];
 extern const char kOutputName_HelpShort[];
 extern const char kOutputName_Help[];
+
+extern const char kOutputPrefixOverride[];
+extern const char kOutputPrefixOverride_HelpShort[];
+extern const char kOutputPrefixOverride_Help[];
 
 extern const char kOutputs[];
 extern const char kOutputs_HelpShort[];
@@ -234,6 +246,10 @@ extern const char kTestonly_Help[];
 extern const char kVisibility[];
 extern const char kVisibility_HelpShort[];
 extern const char kVisibility_Help[];
+
+extern const char kWriteRuntimeDeps[];
+extern const char kWriteRuntimeDeps_HelpShort[];
+extern const char kWriteRuntimeDeps_Help[];
 
 // -----------------------------------------------------------------------------
 
