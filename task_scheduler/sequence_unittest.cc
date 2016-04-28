@@ -19,23 +19,28 @@ class TaskSchedulerSequenceTest : public testing::Test {
       : task_a_owned_(
             new Task(FROM_HERE,
                      Closure(),
-                     TaskTraits().WithPriority(TaskPriority::BACKGROUND))),
+                     TaskTraits().WithPriority(TaskPriority::BACKGROUND),
+                     TimeDelta())),
         task_b_owned_(
             new Task(FROM_HERE,
                      Closure(),
-                     TaskTraits().WithPriority(TaskPriority::USER_VISIBLE))),
+                     TaskTraits().WithPriority(TaskPriority::USER_VISIBLE),
+                     TimeDelta())),
         task_c_owned_(
             new Task(FROM_HERE,
                      Closure(),
-                     TaskTraits().WithPriority(TaskPriority::USER_BLOCKING))),
+                     TaskTraits().WithPriority(TaskPriority::USER_BLOCKING),
+                     TimeDelta())),
         task_d_owned_(
             new Task(FROM_HERE,
                      Closure(),
-                     TaskTraits().WithPriority(TaskPriority::USER_BLOCKING))),
+                     TaskTraits().WithPriority(TaskPriority::USER_BLOCKING),
+                     TimeDelta())),
         task_e_owned_(
             new Task(FROM_HERE,
                      Closure(),
-                     TaskTraits().WithPriority(TaskPriority::BACKGROUND))),
+                     TaskTraits().WithPriority(TaskPriority::BACKGROUND),
+                     TimeDelta())),
         task_a_(task_a_owned_.get()),
         task_b_(task_b_owned_.get()),
         task_c_(task_c_owned_.get()),
@@ -44,11 +49,11 @@ class TaskSchedulerSequenceTest : public testing::Test {
 
  protected:
   // Tasks to be handed off to a Sequence for testing.
-  scoped_ptr<Task> task_a_owned_;
-  scoped_ptr<Task> task_b_owned_;
-  scoped_ptr<Task> task_c_owned_;
-  scoped_ptr<Task> task_d_owned_;
-  scoped_ptr<Task> task_e_owned_;
+  std::unique_ptr<Task> task_a_owned_;
+  std::unique_ptr<Task> task_b_owned_;
+  std::unique_ptr<Task> task_c_owned_;
+  std::unique_ptr<Task> task_d_owned_;
+  std::unique_ptr<Task> task_e_owned_;
 
   // Raw pointers to those same tasks for verification. This is needed because
   // the scoped_ptrs above no longer point to the tasks once they have been

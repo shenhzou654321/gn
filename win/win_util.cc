@@ -21,12 +21,13 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include <memory>
+
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -106,8 +107,6 @@ const wchar_t kWindows8OSKRegPath[] =
 POWER_PLATFORM_ROLE GetPlatformRole() {
   return PowerDeterminePlatformRoleEx(POWER_PLATFORM_ROLE_V2);
 }
-
-}  // namespace
 
 // Returns true if a physical keyboard is detected on Windows 8 and up.
 // Uses the Setup APIs to enumerate the attached keyboards and returns true
@@ -263,7 +262,7 @@ bool GetUserSidString(std::wstring* user_sid) {
   ScopedHandle token_scoped(token);
 
   DWORD size = sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE;
-  scoped_ptr<BYTE[]> user_bytes(new BYTE[size]);
+  std::unique_ptr<BYTE[]> user_bytes(new BYTE[size]);
   TOKEN_USER* user = reinterpret_cast<TOKEN_USER*>(user_bytes.get());
 
   if (!::GetTokenInformation(token, TokenUser, user, size, &size))
@@ -414,7 +413,6 @@ bool IsTabletDevice(std::string* reason) {
   bool slate_power_profile = (role == PlatformRoleSlate);
 
   bool is_tablet = false;
-
   if (mobile_power_profile || slate_power_profile) {
     is_tablet = !GetSystemMetrics(SM_CONVERTIBLESLATEMODE);
     if (!is_tablet) {
@@ -485,7 +483,7 @@ bool DisplayVirtualKeyboard() {
       // We then replace the %CommonProgramFiles% value with the actual common
       // files path found in the process.
       string16 common_program_files_path;
-      scoped_ptr<wchar_t[]> common_program_files_wow6432;
+      std::unique_ptr<wchar_t[]> common_program_files_wow6432;
       DWORD buffer_size =
           GetEnvironmentVariable(L"CommonProgramW6432", NULL, 0);
       if (buffer_size) {

@@ -74,12 +74,12 @@
 // For FILETIME in FromFileTime, until it moves to a new converter class.
 // See TODO(iyengar) below.
 #include <windows.h>
-
 #include "base/gtest_prod_util.h"
 #endif
 
 namespace base {
 
+class PlatformThreadHandle;
 class TimeDelta;
 
 // The functions in the time_internal namespace are meant to be used only by the
@@ -642,6 +642,15 @@ BASE_EXPORT std::ostream& operator<<(std::ostream& os, Time time);
 // Represents monotonically non-decreasing clock time.
 class BASE_EXPORT TimeTicks : public time_internal::TimeBase<TimeTicks> {
  public:
+  // The underlying clock used to generate new TimeTicks.
+  enum class Clock {
+    LINUX_CLOCK_MONOTONIC,
+    IOS_CF_ABSOLUTE_TIME_MINUS_KERN_BOOTTIME,
+    MAC_MACH_ABSOLUTE_TIME,
+    WIN_QPC,
+    WIN_ROLLOVER_PROTECTED_TIME_GET_TIME
+  };
+
   TimeTicks() : TimeBase(0) {
   }
 
@@ -679,6 +688,11 @@ class BASE_EXPORT TimeTicks : public time_internal::TimeBase<TimeTicks> {
   // after, or equal to the |tick_phase|.
   TimeTicks SnappedToNextTick(TimeTicks tick_phase,
                               TimeDelta tick_interval) const;
+
+  // Returns an enum indicating the underlying clock being used to generate
+  // TimeTicks timestamps. This function should only be used for debugging and
+  // logging purposes.
+  static Clock GetClock();
 
 #if defined(OS_WIN)
  protected:
@@ -735,11 +749,18 @@ class BASE_EXPORT ThreadTicks : public time_internal::TimeBase<ThreadTicks> {
   // absolutely needed, call WaitUntilInitialized() before this method.
   static ThreadTicks Now();
 
+#if defined(OS_WIN)
+  // Similar to Now() above except this returns thread-specific CPU time for an
+  // arbitrary thread. All comments for Now() method above apply apply to this
+  // method as well.
+  static ThreadTicks GetForThread(const PlatformThreadHandle& thread_handle);
+#endif
+
  private:
   friend class time_internal::TimeBase<ThreadTicks>;
 
-  // Please use Now() to create a new object. This is for internal use
-  // and testing.
+  // Please use Now() or GetForThread() to create a new object. This is for
+  // internal use and testing.
   explicit ThreadTicks(int64_t us) : TimeBase(us) {}
 
 #if defined(OS_WIN)

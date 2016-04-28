@@ -181,6 +181,16 @@ class RunnableAdapter<R(T::*)(Args...)> {
     return (object->*method_)(std::forward<RunArgs>(args)...);
   }
 
+  template <typename RefType, typename... RunArgs>
+  R Run(const scoped_refptr<RefType>& object, RunArgs&&... args) {
+    // Clang skips CV qualifier check on a method pointer invocation when the
+    // receiver is a subclass. Store the receiver into a unqualified pointer to
+    // T to ensure the CV check works.
+    // https://llvm.org/bugs/show_bug.cgi?id=27037
+    T* receiver = object.get();
+    return (receiver->*method_)(std::forward<RunArgs>(args)...);
+  }
+
  private:
   R (T::*method_)(Args...);
 };
@@ -199,6 +209,16 @@ class RunnableAdapter<R(T::*)(Args...) const> {
   template <typename... RunArgs>
   R Run(const T* object, RunArgs&&... args) {
     return (object->*method_)(std::forward<RunArgs>(args)...);
+  }
+
+  template <typename RefType, typename... RunArgs>
+  R Run(const scoped_refptr<RefType>& object, RunArgs&&... args) {
+    // Clang skips CV qualifier check on a method pointer invocation when the
+    // receiver is a subclass. Store the receiver into a const pointer to
+    // T to ensure the CV check works.
+    // https://llvm.org/bugs/show_bug.cgi?id=27037
+    const T* receiver = object.get();
+    return (receiver->*method_)(std::forward<RunArgs>(args)...);
   }
 
  private:

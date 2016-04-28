@@ -261,8 +261,6 @@ BASE_EXPORT extern NSString* const
     NSWindowDidChangeBackingPropertiesNotification;
 BASE_EXPORT extern NSString* const CBAdvertisementDataServiceDataKey;
 BASE_EXPORT extern NSString* const CBAdvertisementDataServiceUUIDsKey;
-BASE_EXPORT extern NSString* const
-    NSPreferredScrollerStyleDidChangeNotification;
 #endif  // MAC_OS_X_VERSION_10_7
 
 #if !defined(MAC_OS_X_VERSION_10_9) || \
@@ -346,6 +344,10 @@ BASE_EXPORT extern NSString* const NSAppearanceNameVibrantLight;
 @interface NSView (LionSDK)
 - (NSSize)convertSizeFromBacking:(NSSize)size;
 - (void)setWantsBestResolutionOpenGLSurface:(BOOL)flag;
+- (NSDraggingSession*)beginDraggingSessionWithItems:(NSArray*)items
+                                              event:(NSEvent*)event
+                                             source:
+                                                 (id<NSDraggingSource>)source;
 @end
 
 @interface NSObject (ICCameraDeviceDelegateLionSDK)
@@ -354,10 +356,6 @@ BASE_EXPORT extern NSString* const NSAppearanceNameVibrantLight;
                   error:(NSError*)error
                 options:(NSDictionary*)options
             contextInfo:(void*)contextInfo;
-@end
-
-@interface NSScroller (LionSDK)
-+ (NSInteger)preferredScrollerStyle;
 @end
 
 @interface CWInterface (LionSDK)
@@ -532,6 +530,10 @@ BASE_EXPORT extern "C" void NSAccessibilityPostNotificationWithUserInfo(
 
 @interface NSWindow (YosemiteSDK)
 - (void)setTitlebarAppearsTransparent:(BOOL)flag;
+@end
+
+@interface NSProcessInfo (YosemiteSDK)
+@property(readonly) NSOperatingSystemVersion operatingSystemVersion;
 @end
 
 #endif  // MAC_OS_X_VERSION_10_10

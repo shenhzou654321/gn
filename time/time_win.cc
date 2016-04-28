@@ -33,7 +33,6 @@
 
 #include "base/time/time.h"
 
-#pragma comment(lib, "winmm.lib")
 #include <windows.h>
 #include <mmsystem.h>
 #include <stdint.h>
@@ -43,6 +42,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/synchronization/lock.h"
+#include "base/threading/platform_thread.h"
 
 using base::ThreadTicks;
 using base::Time;
@@ -98,16 +98,6 @@ uint32_t g_high_res_timer_count = 0;
 // The lock to control access to the above two variables.
 base::LazyInstance<base::Lock>::Leaky g_high_res_lock =
     LAZY_INSTANCE_INITIALIZER;
-
-// Returns a pointer to the QueryThreadCycleTime() function from Windows.
-// Can't statically link to it because it is not available on XP.
-using QueryThreadCycleTimePtr = decltype(::QueryThreadCycleTime)*;
-QueryThreadCycleTimePtr GetQueryThreadCycleTimeFunction() {
-  static const QueryThreadCycleTimePtr query_thread_cycle_time_fn =
-      reinterpret_cast<QueryThreadCycleTimePtr>(::GetProcAddress(
-          ::GetModuleHandle(L"kernel32.dll"), "QueryThreadCycleTime"));
-  return query_thread_cycle_time_fn;
-}
 
 // Returns the current value of the performance counter.
 uint64_t QPCNowRaw() {
@@ -512,12 +502,24 @@ bool TimeTicks::IsHighResolution() {
 }
 
 // static
+TimeTicks::Clock TimeTicks::GetClock() {
+  return IsHighResolution() ?
+      Clock::WIN_QPC : Clock::WIN_ROLLOVER_PROTECTED_TIME_GET_TIME;
+}
+
+// static
 ThreadTicks ThreadTicks::Now() {
+  return ThreadTicks::GetForThread(PlatformThread::CurrentHandle());
+}
+
+// static
+ThreadTicks ThreadTicks::GetForThread(
+    const base::PlatformThreadHandle& thread_handle) {
   DCHECK(IsSupported());
 
   // Get the number of TSC ticks used by the current thread.
   ULONG64 thread_cycle_time = 0;
-  GetQueryThreadCycleTimeFunction()(::GetCurrentThread(), &thread_cycle_time);
+  ::QueryThreadCycleTime(thread_handle.platform_handle(), &thread_cycle_time);
 
   // Get the frequency of the TSC.
   double tsc_ticks_per_second = TSCTicksPerSecond();
@@ -532,8 +534,7 @@ ThreadTicks ThreadTicks::Now() {
 
 // static
 bool ThreadTicks::IsSupportedWin() {
-  static bool is_supported = GetQueryThreadCycleTimeFunction() &&
-                             base::CPU().has_non_stop_time_stamp_counter() &&
+  static bool is_supported = base::CPU().has_non_stop_time_stamp_counter() &&
                              !IsBuggyAthlon(base::CPU());
   return is_supported;
 }
