@@ -89,7 +89,7 @@ size_t ProcessMemoryDump::CountResidentBytes(void* start_address,
   std::unique_ptr<PSAPI_WORKING_SET_EX_INFORMATION[]> vec(
       new PSAPI_WORKING_SET_EX_INFORMATION[max_vec_size]);
 #elif defined(OS_FREEBSD)
-  scoped_ptr<char[]> vec(new char[max_vec_size]);
+  std::unique_ptr<char[]> vec(new char[max_vec_size]);
 #elif defined(OS_POSIX)
   std::unique_ptr<unsigned char[]> vec(new unsigned char[max_vec_size]);
 #endif
