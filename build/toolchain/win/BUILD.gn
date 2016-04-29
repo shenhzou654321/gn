@@ -4,25 +4,10 @@
 
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/win/visual_studio_version.gni")
-import("//build/toolchain/goma.gni")
 import("//build/toolchain/toolchain.gni")
 
 # Should only be running on Windows.
 assert(is_win)
-
-# Setup the Visual Studio state.
-#
-# Its arguments are the VS path and the compiler wrapper tool. It will write
-# "environment.x86" and "environment.x64" to the build directory and return a
-# list to us.
-gyp_win_tool_path =
-    rebase_path("//tools/gyp/pylib/gyp/win_tool.py", root_build_dir)
-
-if (use_goma) {
-  goma_prefix = "$goma_dir/gomacc.exe "
-} else {
-  goma_prefix = ""
-}
 
 # This value will be inherited in the toolchain below.
 if (is_lto) {
@@ -30,23 +15,6 @@ if (is_lto) {
       exec_script("../get_concurrent_links.py", [ "--lto" ], "value")
 } else {
   concurrent_links = exec_script("../get_concurrent_links.py", [], "value")
-}
-
-# Copy the VS runtime DLL for the default toolchain to the root build directory
-# so things will run.
-if (current_toolchain == default_toolchain) {
-  if (is_debug) {
-    configuration_name = "Debug"
-  } else {
-    configuration_name = "Release"
-  }
-  exec_script("../../vs_toolchain.py",
-              [
-                "copy_dlls",
-                rebase_path(root_build_dir),
-                configuration_name,
-                target_cpu,
-              ])
 }
 
 # Parameters:
@@ -99,7 +67,9 @@ template("msvc_toolchain") {
     }
 
     tool("rc") {
-      command = "$python_path gyp-win-tool rc-wrapper $env rc.exe {{defines}} {{include_dirs}} /fo{{output}} {{source}}"
+      rc_wrapper =
+          rebase_path("//build/toolchain/win/rc_wrapper.py", root_build_dir)
+      command = "$python_path $rc_wrapper $env rc.exe {{defines}} {{include_dirs}} /fo{{output}} {{source}}"
       outputs = [
         "$object_subdir/{{source_name_part}}.res",
       ]
@@ -112,7 +82,9 @@ template("msvc_toolchain") {
       } else {
         ml = "ml.exe"
       }
-      command = "$python_path gyp-win-tool asm-wrapper $env $ml {{defines}} {{include_dirs}} {{asmflags}} /c /Fo{{output}} {{source}}"
+      asm_wrapper =
+          rebase_path("//build/toolchain/win/asm_wrapper.py", root_build_dir)
+      command = "$python_path $asm_wrapper $env $ml {{defines}} {{include_dirs}} {{asmflags}} /c /Fo{{output}} {{source}}"
       description = "ASM {{output}}"
       outputs = [
         "$object_subdir/{{source_name_part}}.obj",
@@ -121,7 +93,10 @@ template("msvc_toolchain") {
 
     tool("alink") {
       rspfile = "{{output}}.rsp"
-      command = "$python_path gyp-win-tool link-wrapper $env False lib.exe /nologo /ignore:4221 /OUT:{{output}} @$rspfile"
+
+      link_wrapper =
+          rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
+      command = "$python_path $link_wrapper $env False lib.exe /nologo /ignore:4221 /OUT:{{output}} @$rspfile"
       description = "LIB {{output}}"
       outputs = [
         # Ignore {{output_extension}} and always use .lib, there's no reason to
@@ -140,7 +115,9 @@ template("msvc_toolchain") {
       libname = "${dllname}.lib"  # e.g. foo.dll.lib
       rspfile = "${dllname}.rsp"
 
-      link_command = "$python_path gyp-win-tool link-wrapper $env False link.exe /nologo /IMPLIB:$libname /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
+      link_wrapper =
+          rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
+      link_command = "$python_path $link_wrapper $env False link.exe /nologo /IMPLIB:$libname /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
 
       # TODO(brettw) support manifests
       #manifest_command = "$python_path gyp-win-tool manifest-wrapper $env mt.exe -nologo -manifest $manifests -out:${dllname}.manifest"
@@ -171,7 +148,9 @@ template("msvc_toolchain") {
       dllname = "{{root_out_dir}}/{{target_output_name}}{{output_extension}}"  # e.g. foo.dll
       rspfile = "${dllname}.rsp"
 
-      link_command = "$python_path gyp-win-tool link-wrapper $env False link.exe /nologo /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
+      link_wrapper =
+          rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
+      link_command = "$python_path $link_wrapper $env False link.exe /nologo /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
 
       command = link_command
 
@@ -189,7 +168,9 @@ template("msvc_toolchain") {
     tool("link") {
       rspfile = "{{output}}.rsp"
 
-      link_command = "$python_path gyp-win-tool link-wrapper $env False link.exe /nologo /OUT:{{output}} /PDB:{{output}}.pdb @$rspfile"
+      link_wrapper =
+          rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
+      link_command = "$python_path $link_wrapper $env False link.exe /nologo /OUT:{{output}} /PDB:{{output}}.pdb @$rspfile"
 
       # TODO(brettw) support manifests
       #manifest_command = "$python_path gyp-win-tool manifest-wrapper $env mt.exe -nologo -manifest $manifests -out:{{output}}.manifest"
@@ -230,7 +211,6 @@ template("msvc_toolchain") {
       forward_variables_from(invoker,
                              [
                                "is_clang",
-                               "is_component_build",
                              ])
 
       # This value needs to be passed through unchanged.
@@ -239,107 +219,38 @@ template("msvc_toolchain") {
   }
 }
 
-if (host_os == "win") {
-  clang_cl = "clang-cl.exe"
-} else {
-  clang_cl = "clang-cl"
-}
-
-# 32-bit toolchains. Only define these when the target architecture is 32-bit
-# since we don't do any 32-bit cross compiles when targeting 64-bit (the
-# build does generate some 64-bit stuff from 32-bit target builds).
 if (target_cpu == "x86") {
-  x86_toolchain_data = exec_script("setup_toolchain.py",
-                                   [
-                                     visual_studio_path,
-                                     gyp_win_tool_path,
-                                     windows_sdk_path,
-                                     visual_studio_runtime_dirs,
-                                     "x86",
-                                   ],
-                                   "scope")
-
   msvc_toolchain("x86") {
-    environment = "environment.x86"
+    environment = x86_environment_path
     toolchain_cpu = "x86"
-    cl = "${goma_prefix}\"${x86_toolchain_data.vc_bin_dir}/cl.exe\""
+    cl = "\"${toolchain_data.x86_bin_dir}/cl.exe\""
     is_clang = false
   }
 
   msvc_toolchain("clang_x86") {
-    environment = "environment.x86"
+    environment = x86_environment_path
     toolchain_cpu = "x86"
-    prefix = rebase_path("//third_party/llvm-build/Release+Asserts/bin",
-                         root_build_dir)
-    cl = "${goma_prefix}$prefix/${clang_cl}"
+    cl = "$win_clang_prefix/${clang_cl}"
     toolchain_os = "win"
     is_clang = true
   }
 }
 
-# 64-bit toolchains.
-x64_toolchain_data = exec_script("setup_toolchain.py",
-                                 [
-                                   visual_studio_path,
-                                   gyp_win_tool_path,
-                                   windows_sdk_path,
-                                   visual_studio_runtime_dirs,
-                                   "x64",
-                                 ],
-                                 "scope")
-
-template("win_x64_toolchains") {
-  # TODO(mcgrathr): These assignments are only required because of
-  # crbug.com/395883.  Drop them if that ever gets fixed in GN.
-  concurrent_links = invoker.concurrent_links
-  goma_prefix = invoker.goma_prefix
-  x64_toolchain_data = invoker.x64_toolchain_data
-  clang_cl = invoker.clang_cl
-
-  msvc_toolchain(target_name) {
-    environment = "environment.x64"
+if (target_cpu == "x64") {
+  msvc_toolchain("x64") {
+    environment = x64_environment_path
     toolchain_cpu = "x64"
-    cl = "${goma_prefix}\"${x64_toolchain_data.vc_bin_dir}/cl.exe\""
+    cl = "\"${toolchain_data.x64_bin_dir}/cl.exe\""
     is_clang = false
-
-    forward_variables_from(invoker, [ "is_component_build" ])
   }
 
-  msvc_toolchain("clang_" + target_name) {
-    environment = "environment.x64"
+  msvc_toolchain("clang_x64") {
+    environment = x64_environment_path
     toolchain_cpu = "x64"
-    prefix = rebase_path("//third_party/llvm-build/Release+Asserts/bin",
-                         root_build_dir)
-    cl = "${goma_prefix}$prefix/${clang_cl}"
+    cl = "$win_clang_prefix/${clang_cl}"
     toolchain_os = "win"
     is_clang = true
-
-    forward_variables_from(invoker, [ "is_component_build" ])
   }
-}
-
-win_x64_toolchains("x64") {
-  # TODO(mcgrathr): These assignments are only required because of
-  # crbug.com/395883.  Drop them if that ever gets fixed in GN.
-  concurrent_links = concurrent_links
-  goma_prefix = goma_prefix
-  x64_toolchain_data = x64_toolchain_data
-}
-
-# The nacl_win64 toolchain is nearly identical to the plain x64 toolchain.
-# It's used solely for building nacl64.exe (//components/nacl/broker:nacl64).
-# The only reason it's a separate toolchain is so that it can force
-# is_component_build to false in the toolchain_args() block, because
-# building nacl64.exe in component style does not work.
-win_x64_toolchains("nacl_win64") {
-  is_component_build = false
-
-  # TODO(mcgrathr): These assignments are only required because of
-  # crbug.com/395883.  Drop them if that ever gets fixed in GN.
-  concurrent_links = concurrent_links
-  goma_prefix = goma_prefix
-  x64_toolchain_data = x64_toolchain_data
-  clang_cl = clang_cl
 }
 
 # WinRT toolchains. Only define these when targeting them.
@@ -349,21 +260,25 @@ win_x64_toolchains("nacl_win64") {
 # in terms of what setup_toolchain returns for a certain CPU architecture.
 if (target_os == "winrt_81" || target_os == "winrt_81_phone" ||
     target_os == "winrt_10") {
-  msvc_toolchain("winrt_x86") {
-    environment = "environment.winrt_x86"
-    cl = "${goma_prefix}\"${vc_bin_dir}/cl.exe\""
-    is_clang = false
+  if (target_cpu == "x86") {
+    msvc_toolchain("winrt_x86") {
+      environment = "environment.winrt_x86"
+      cl = "\"${vc_bin_dir}/cl.exe\""
+      is_clang = false
 
-    toolchain_cpu = "x86"
-    toolchain_os = current_os
+      toolchain_cpu = "x86"
+      toolchain_os = current_os
+    }
   }
 
-  msvc_toolchain("winrt_x64") {
-    environment = "environment.winrt_x64"
-    cl = "${goma_prefix}\"${vc_bin_dir}/cl.exe\""
-    is_clang = false
+  if (target_cpu == "x64") {
+    msvc_toolchain("winrt_x64") {
+      environment = "environment.winrt_x64"
+      cl = "\"${vc_bin_dir}/cl.exe\""
+      is_clang = false
 
-    toolchain_cpu = "x64"
-    toolchain_os = current_os
+      toolchain_cpu = "x64"
+      toolchain_os = current_os
+    }
   }
 }

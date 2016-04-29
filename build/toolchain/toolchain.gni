@@ -5,25 +5,9 @@
 # Toolchain-related configuration that may be needed outside the context of the
 # toolchain() rules themselves.
 
-# Subdirectory within root_out_dir for shared library files.
-# TODO(agrieve): GYP sets this to "lib" for Linux & Android, but this won't work
-#     in GN until support for loadable_module() is added.
-#     See: https://codereview.chromium.org/1236503002/
-shlib_subdir = "."
-
-# Root out dir for shared library files.
-root_shlib_dir = root_out_dir
-if (shlib_subdir != ".") {
-  root_shlib_dir += "/$shlib_subdir"
-}
-
 # Extension for shared library files (including leading dot).
-if (is_mac || is_ios) {
+if (is_mac) {
   shlib_extension = ".dylib"
-} else if (is_android && is_component_build) {
-  # By appending .cr, we prevent name collisions with libraries already
-  # loaded by the Android zygote.
-  shlib_extension = ".cr.so"
 } else if (is_posix) {
   shlib_extension = ".so"
 } else if (is_win) {
@@ -48,9 +32,12 @@ if (is_posix) {
 stamp_description = "STAMP {{output}}"
 copy_description = "COPY {{source}} {{output}}"
 if (host_os == "win") {
-  stamp_command = "$python_path gyp-win-tool stamp {{output}}"
-  copy_command =
-      "$python_path gyp-win-tool recursive-mirror {{source}} {{output}}"
+  stamp_path = rebase_path("//build/toolchain/win/stamp.py", root_build_dir)
+  copy_path =
+      rebase_path("//build/toolchain/win/recursive_mirror.py", root_build_dir)
+
+  stamp_command = "$python_path $stamp_path {{output}}"
+  copy_command = "$python_path $copy_path {{source}} {{output}}"
 } else {
   stamp_command = "touch {{output}}"
   copy_command = "ln -f {{source}} {{output}} 2>/dev/null || (rm -rf {{output}} && cp -af {{source}} {{output}})"
