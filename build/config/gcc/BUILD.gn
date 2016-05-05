@@ -46,16 +46,10 @@ config("symbol_visibility_hidden") {
 #  }
 config("rpath_for_built_shared_libraries") {
   if (!is_android) {
-    # Note: Android doesn't support rpath.
-    if (shlib_subdir != ".") {
-      rpath_link = "${shlib_subdir}/"
-    } else {
-      rpath_link = "."
-    }
     ldflags = [
       # Want to pass "\$". GN will re-escape as required for ninja.
-      "-Wl,-rpath=\$ORIGIN/${rpath_link}",
-      "-Wl,-rpath-link=${rpath_link}",
+      "-Wl,-rpath=\$ORIGIN",
+      "-Wl,-rpath-link=.",
     ]
   }
 }
@@ -77,12 +71,7 @@ config("executable_ldconfig") {
     # Find the path containing shared libraries for this toolchain
     # relative to the build directory. ${root_out_dir} will be a
     # subdirectory of ${root_build_dir} when cross compiling.
-    rebased_out_dir = rebase_path(root_out_dir, root_build_dir)
-    if (shlib_subdir != ".") {
-      rpath_link = "${rebased_out_dir}/${shlib_subdir}"
-    } else {
-      rpath_link = rebased_out_dir
-    }
+    rpath_link = rebase_path(root_out_dir, root_build_dir)
 
     ldflags = [
       "-Wl,-rpath-link=${rpath_link}",
