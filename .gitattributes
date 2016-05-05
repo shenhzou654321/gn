@@ -1,0 +1,16 @@
+* text=auto
+
+*.c text
+*.h text
+*.cpp text
+*.hpp text
+*.cc text
+*.hh text
+*.py text
+*.txt text
+*.gn text
+*.gni text
+
+*.sln text eol=crlf
+
+*.sh text eol=lf
