@@ -1,0 +1,7 @@
+group("default") {
+  testonly = true
+  deps = [
+    "//tools/gn",
+    "//tools/gn:gn_unittests",
+  ]
+}
