@@ -155,8 +155,8 @@ if (host_toolchain == "") {
   # TODO(dpranke): Add some sort of assert here that verifies that
   # no toolchain omitted host_toolchain from its toolchain_args().
 
-  if (host_os == "linux") {
-    if (target_os != "linux") {
+  if (host_os == "linux" || host_os == "freebsd") {
+    if ((host_os == "linux" && target_os != "linux") || (host_os == "freebsd" && target_os != "freebsd")) {
       # TODO(dpranke) - is_clang normally applies only to the target
       # build, and there is no way to indicate that you want to override
       # it for both the target build *and* the host build. Do we need to
@@ -203,7 +203,7 @@ if (target_os == "android") {
   }
 } else if (target_os == "ios") {
   _default_toolchain = "//build/toolchain/mac:ios_clang_arm"
-} else if (target_os == "linux") {
+} else if (target_os == "linux" || target_os == "freebsd") {
   if (is_clang) {
     _default_toolchain = "//build/toolchain/linux:clang_$target_cpu"
   } else {
@@ -263,6 +263,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
   is_nacl = false
   is_posix = false
   is_win = true
+  is_freebsd = false
 } else if (current_os == "mac") {
   is_android = false
   is_chromeos = false
@@ -272,6 +273,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
   is_nacl = false
   is_posix = true
   is_win = false
+  is_freebsd = false
 } else if (current_os == "android") {
   is_android = true
   is_chromeos = false
@@ -281,6 +283,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
   is_nacl = false
   is_posix = true
   is_win = false
+  is_freebsd = false
 } else if (current_os == "chromeos") {
   is_android = false
   is_chromeos = true
@@ -290,6 +293,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
   is_nacl = false
   is_posix = true
   is_win = false
+  is_freebsd = false
 } else if (current_os == "nacl") {
   # current_os == "nacl" will be passed by the nacl toolchain definition.
   # It is not set by default or on the command line. We treat is as a
@@ -302,6 +306,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
   is_nacl = true
   is_posix = true
   is_win = false
+  is_freebsd = false
 } else if (current_os == "ios") {
   is_android = false
   is_chromeos = false
@@ -311,6 +316,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
   is_nacl = false
   is_posix = true
   is_win = false
+  is_freebsd = false
 } else if (current_os == "linux") {
   is_android = false
   is_chromeos = false
@@ -320,6 +326,17 @@ if (current_os == "win" || current_os == "winrt_81" ||
   is_nacl = false
   is_posix = true
   is_win = false
+  is_freebsd = false
+} else if (current_os == "freebsd") {
+  is_android = false
+  is_chromeos = false
+  is_ios = false
+  is_linux = false
+  is_mac = false
+  is_nacl = false
+  is_posix = true
+  is_win = false
+  is_freebsd = true
 }
 
 # =============================================================================

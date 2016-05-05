@@ -28,6 +28,9 @@ source_set("libevent") {
     sources += [ "epoll.c" ]
     include_dirs = [ "linux" ]
     libs = [ "rt" ]
+  } else if (is_freebsd) {
+    sources += [ "kqueue.c" ]
+    include_dirs = [ "freebsd" ]
   } else if (is_android) {
     sources += [ "epoll.c" ]
     include_dirs = [ "android" ]
