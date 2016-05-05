@@ -45,7 +45,7 @@ declare_args() {
   use_xkbcommon = false
 
   # Whether we should use glib, a low level C utility library.
-  use_glib = is_linux
+  use_glib = false
 
   # Indicates if material design elements in the top chrome of the browser are
   # enabled.
