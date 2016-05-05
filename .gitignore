@@ -1,10 +1,4 @@
 buildtools
-base
 out
 out_bootstrap
-testing/gmock
-testing/gtest
-third_party/icu
 third_party/llvm-build
-tools/gn
-tools/gyp
