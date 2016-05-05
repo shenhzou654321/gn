@@ -2100,9 +2100,6 @@ action("build_date") {
   script = "//build/write_build_date_header.py"
 
   # Force recalculation if there's been a change.
-  inputs = [
-    "//build/util/LASTCHANGE",
-  ]
   outputs = [
     "$target_gen_dir/generated_build_date.h",
   ]
