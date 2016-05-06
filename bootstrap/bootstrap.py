@@ -404,7 +404,7 @@ def write_ninja(path, root_gen_dir, options):
     ])
 
   if is_linux:
-    libs.extend(['-lrt'])
+    libs.extend(['-lrt', 'atomic'])
     ldflags.extend(['-pthread'])
 
     static_libraries['xdg_user_dirs'] = {
