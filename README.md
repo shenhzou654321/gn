@@ -1,5 +1,7 @@
 # Standalone GN
 
+[![Build Status](https://travis-ci.org/timniederhausen/gn.svg?branch=master)](https://travis-ci.org/timniederhausen/gn)
+
 This repo contains a standalone version of Chromium's GN build system.
 
 For more information regarding GN itself see [here](https://github.com/timniederhausen/gn/blob/gn/master/README.md).
