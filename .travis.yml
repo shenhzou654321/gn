@@ -26,7 +26,7 @@ install:
 
 script:
   - git submodule update --init --recursive
-  - tools/gn/bootstrap/bootstrap.py --no-clean --no-rebuild --jobs 2
-  - out_bootstrap/gn gen out --args="$GN_ARGS"
-  - ninja -C out gn gn_unittests
-  - out/gn_unittests
+  - tools/gn/bootstrap/bootstrap.py --no-clean --no-rebuild --jobs 10
+  - out_bootstrap/gn gen out/Release --args="is_debug=false $GN_ARGS"
+  - ninja -C out/Release -j10 gn gn_unittests
+  - out/Release/gn_unittests
