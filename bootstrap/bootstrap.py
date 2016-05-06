@@ -91,6 +91,8 @@ def main(argv):
                     help='Re-used build directory instead of using new '
                          'temporary location each time')
   parser.add_option('--gn-gen-args', help='Args to pass to gn gen --args')
+  parser.add_option('-j', '--jobs', type="int",
+                    help='ninja -j argument. Jobs to run parallel')
   parser.add_option('-v', '--verbose', action='store_true',
                     help='Log more details')
   options, args = parser.parse_args(argv)
@@ -146,6 +148,9 @@ def build_gn_with_ninja_manually(tempdir, options):
   cmd = ['ninja', '-C', tempdir]
   if options.verbose:
     cmd.append('-v')
+  if options.jobs:
+    cmd.append('-j')
+    cmd.append(str(options.jobs))
   cmd.append('gn')
   check_call(cmd)
 
