@@ -12,6 +12,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
@@ -24,8 +25,10 @@
 #include "base/task_scheduler/sequence_sort_key.h"
 #include "base/task_scheduler/task_tracker.h"
 #include "base/task_scheduler/test_task_factory.h"
+#include "base/task_scheduler/test_utils.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -35,6 +38,8 @@ namespace {
 const size_t kNumThreadsInThreadPool = 4;
 const size_t kNumThreadsPostingTasks = 4;
 const size_t kNumTasksPostedPerThread = 150;
+
+using IORestriction = SchedulerThreadPoolImpl::IORestriction;
 
 class TestDelayedTaskManager : public DelayedTaskManager {
  public:
@@ -58,7 +63,8 @@ class TaskSchedulerThreadPoolImplTest
 
   void SetUp() override {
     thread_pool_ = SchedulerThreadPoolImpl::Create(
-        ThreadPriority::NORMAL, kNumThreadsInThreadPool,
+        "TestThreadPoolWithFileIO", ThreadPriority::NORMAL,
+        kNumThreadsInThreadPool, IORestriction::ALLOWED,
         Bind(&TaskSchedulerThreadPoolImplTest::ReEnqueueSequenceCallback,
              Unretained(this)),
         &task_tracker_, &delayed_task_manager_);
@@ -126,7 +132,7 @@ class ThreadPostingTasks : public SimpleThread {
           WaitBeforePostTask::WAIT_FOR_ALL_THREADS_IDLE) {
         thread_pool_->WaitForAllWorkerThreadsIdleForTesting();
       }
-      EXPECT_TRUE(factory_.PostTask(post_nested_task_, nullptr));
+      EXPECT_TRUE(factory_.PostTask(post_nested_task_, Closure()));
     }
   }
 
@@ -143,11 +149,6 @@ using WaitBeforePostTask = ThreadPostingTasks::WaitBeforePostTask;
 
 void ShouldNotRunCallback() {
   ADD_FAILURE() << "Ran a task that shouldn't run.";
-}
-
-void SignalEventCallback(WaitableEvent* event) {
-  DCHECK(event);
-  event->Signal();
 }
 
 }  // namespace
@@ -219,17 +220,17 @@ TEST_P(TaskSchedulerThreadPoolImplTest, NestedPostTasks) {
 }
 
 TEST_P(TaskSchedulerThreadPoolImplTest, PostTasksWithOneAvailableThread) {
-  // Post tasks to keep all threads busy except one until |event| is signaled.
-  // Use different factories so that tasks are added to different sequences and
-  // can run simultaneously when the execution mode is SEQUENCED.
+  // Post blocking tasks to keep all threads busy except one until |event| is
+  // signaled. Use different factories so that tasks are added to different
+  // sequences and can run simultaneously when the execution mode is SEQUENCED.
   WaitableEvent event(true, false);
   std::vector<std::unique_ptr<test::TestTaskFactory>> blocked_task_factories;
   for (size_t i = 0; i < (kNumThreadsInThreadPool - 1); ++i) {
     blocked_task_factories.push_back(WrapUnique(new test::TestTaskFactory(
         thread_pool_->CreateTaskRunnerWithTraits(TaskTraits(), GetParam()),
         GetParam())));
-    EXPECT_TRUE(
-        blocked_task_factories.back()->PostTask(PostNestedTask::NO, &event));
+    EXPECT_TRUE(blocked_task_factories.back()->PostTask(
+        PostNestedTask::NO, Bind(&WaitableEvent::Wait, Unretained(&event))));
     blocked_task_factories.back()->WaitForAllTasksToRun();
   }
 
@@ -239,7 +240,7 @@ TEST_P(TaskSchedulerThreadPoolImplTest, PostTasksWithOneAvailableThread) {
       thread_pool_->CreateTaskRunnerWithTraits(TaskTraits(), GetParam()),
       GetParam());
   for (size_t i = 0; i < kNumTasksPostedPerThread; ++i)
-    EXPECT_TRUE(short_task_factory.PostTask(PostNestedTask::NO, nullptr));
+    EXPECT_TRUE(short_task_factory.PostTask(PostNestedTask::NO, Closure()));
   short_task_factory.WaitForAllTasksToRun();
 
   // Release tasks waiting on |event|.
@@ -252,16 +253,17 @@ TEST_P(TaskSchedulerThreadPoolImplTest, PostTasksWithOneAvailableThread) {
 
 TEST_P(TaskSchedulerThreadPoolImplTest, Saturate) {
   // Verify that it is possible to have |kNumThreadsInThreadPool|
-  // tasks/sequences running simultaneously. Use different factories so that
-  // tasks are added to different sequences and can run simultaneously when the
-  // execution mode is SEQUENCED.
+  // tasks/sequences running simultaneously. Use different factories so that the
+  // blocking tasks are added to different sequences and can run simultaneously
+  // when the execution mode is SEQUENCED.
   WaitableEvent event(true, false);
   std::vector<std::unique_ptr<test::TestTaskFactory>> factories;
   for (size_t i = 0; i < kNumThreadsInThreadPool; ++i) {
     factories.push_back(WrapUnique(new test::TestTaskFactory(
         thread_pool_->CreateTaskRunnerWithTraits(TaskTraits(), GetParam()),
         GetParam())));
-    EXPECT_TRUE(factories.back()->PostTask(PostNestedTask::NO, &event));
+    EXPECT_TRUE(factories.back()->PostTask(
+        PostNestedTask::NO, Bind(&WaitableEvent::Wait, Unretained(&event))));
     factories.back()->WaitForAllTasksToRun();
   }
 
@@ -289,7 +291,7 @@ TEST_P(TaskSchedulerThreadPoolImplTest, PostDelayedTask) {
   // Post a delayed task.
   WaitableEvent task_ran(true, false);
   EXPECT_TRUE(thread_pool_->CreateTaskRunnerWithTraits(TaskTraits(), GetParam())
-                  ->PostDelayedTask(FROM_HERE, Bind(&SignalEventCallback,
+                  ->PostDelayedTask(FROM_HERE, Bind(&WaitableEvent::Signal,
                                                     Unretained(&task_ran)),
                                     TimeDelta::FromSeconds(10)));
 
@@ -314,6 +316,69 @@ INSTANTIATE_TEST_CASE_P(Parallel,
 INSTANTIATE_TEST_CASE_P(Sequenced,
                         TaskSchedulerThreadPoolImplTest,
                         ::testing::Values(ExecutionMode::SEQUENCED));
+INSTANTIATE_TEST_CASE_P(SingleThreaded,
+                        TaskSchedulerThreadPoolImplTest,
+                        ::testing::Values(ExecutionMode::SINGLE_THREADED));
+
+namespace {
+
+void NotReachedReEnqueueSequenceCallback(scoped_refptr<Sequence> sequence) {
+  ADD_FAILURE()
+      << "Unexpected invocation of NotReachedReEnqueueSequenceCallback.";
+}
+
+// Verifies that the current thread allows I/O if |io_restriction| is ALLOWED
+// and disallows it otherwise. Signals |event| before returning.
+void ExpectIORestriction(IORestriction io_restriction, WaitableEvent* event) {
+  DCHECK(event);
+
+  if (io_restriction == IORestriction::ALLOWED) {
+    ThreadRestrictions::AssertIOAllowed();
+  } else {
+    static_assert(
+        ENABLE_THREAD_RESTRICTIONS == DCHECK_IS_ON(),
+        "ENABLE_THREAD_RESTRICTIONS and DCHECK_IS_ON() have diverged.");
+    EXPECT_DCHECK_DEATH({ ThreadRestrictions::AssertIOAllowed(); }, "");
+  }
+
+  event->Signal();
+}
+
+class TaskSchedulerThreadPoolImplIORestrictionTest
+    : public testing::TestWithParam<IORestriction> {
+ public:
+  TaskSchedulerThreadPoolImplIORestrictionTest() = default;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TaskSchedulerThreadPoolImplIORestrictionTest);
+};
+
+}  // namespace
+
+TEST_P(TaskSchedulerThreadPoolImplIORestrictionTest, IORestriction) {
+  TaskTracker task_tracker;
+  DelayedTaskManager delayed_task_manager(Bind(&DoNothing));
+
+  auto thread_pool = SchedulerThreadPoolImpl::Create(
+      "TestThreadPoolWithParam", ThreadPriority::NORMAL, 1U, GetParam(),
+      Bind(&NotReachedReEnqueueSequenceCallback), &task_tracker,
+      &delayed_task_manager);
+  ASSERT_TRUE(thread_pool);
+
+  WaitableEvent task_ran(true, false);
+  thread_pool->CreateTaskRunnerWithTraits(TaskTraits(), ExecutionMode::PARALLEL)
+      ->PostTask(FROM_HERE, Bind(&ExpectIORestriction, GetParam(), &task_ran));
+  task_ran.Wait();
+
+  thread_pool->JoinForTesting();
+}
+
+INSTANTIATE_TEST_CASE_P(IOAllowed,
+                        TaskSchedulerThreadPoolImplIORestrictionTest,
+                        ::testing::Values(IORestriction::ALLOWED));
+INSTANTIATE_TEST_CASE_P(IODisallowed,
+                        TaskSchedulerThreadPoolImplIORestrictionTest,
+                        ::testing::Values(IORestriction::DISALLOWED));
 
 }  // namespace internal
 }  // namespace base

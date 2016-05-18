@@ -11,9 +11,11 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/debug/debugging_flags.h"
+#include "base/debug/stack_trace.h"
 #include "base/memory/ptr_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/heap_profiler.h"
 #include "base/trace_event/heap_profiler_allocation_context_tracker.h"
 #include "base/trace_event/heap_profiler_stack_frame_deduplicator.h"
@@ -170,7 +172,29 @@ void MemoryDumpManager::EnableHeapProfilingIfNeeded() {
           switches::kEnableHeapProfiling))
     return;
 
-  AllocationContextTracker::SetCaptureEnabled(true);
+  std::string profiling_mode = CommandLine::ForCurrentProcess()
+      ->GetSwitchValueASCII(switches::kEnableHeapProfiling);
+  if (profiling_mode == "") {
+    AllocationContextTracker::SetCaptureMode(
+        AllocationContextTracker::CaptureMode::PSEUDO_STACK);
+  }
+  else if (profiling_mode == switches::kEnableHeapProfilingModeNative) {
+#if HAVE_TRACE_STACK_FRAME_POINTERS && \
+    (BUILDFLAG(ENABLE_PROFILING) || !defined(NDEBUG))
+    // We need frame pointers for native tracing to work, and they are
+    // enabled in profiling and debug builds.
+    AllocationContextTracker::SetCaptureMode(
+        AllocationContextTracker::CaptureMode::NATIVE_STACK);
+#else
+    CHECK(false) << "'" << profiling_mode << "' mode for "
+                 << switches::kEnableHeapProfiling << " flag is not supported "
+                 << "for this platform / build type.";
+#endif
+  } else {
+    CHECK(false) << "Invalid mode '" << profiling_mode << "' for "
+               << switches::kEnableHeapProfiling << " flag.";
+  }
+
   for (auto mdp : dump_providers_)
     mdp->dump_provider->OnHeapProfilingEnabled(true);
   heap_profiling_enabled_ = true;
@@ -658,15 +682,16 @@ void MemoryDumpManager::OnTraceLogEnabled() {
   g_periodic_dumps_count = 0;
   const TraceConfig trace_config =
       TraceLog::GetInstance()->GetCurrentTraceConfig();
-  const TraceConfig::MemoryDumpConfig& config_list =
-      trace_config.memory_dump_config();
-  if (config_list.empty())
+  session_state_->SetMemoryDumpConfig(trace_config.memory_dump_config());
+  const std::vector<TraceConfig::MemoryDumpConfig::Trigger>& triggers_list =
+      trace_config.memory_dump_config().triggers;
+  if (triggers_list.empty())
     return;
 
   uint32_t min_timer_period_ms = std::numeric_limits<uint32_t>::max();
   uint32_t heavy_dump_period_ms = 0;
-  DCHECK_LE(config_list.size(), 2u);
-  for (const TraceConfig::MemoryDumpTriggerConfig& config : config_list) {
+  DCHECK_LE(triggers_list.size(), 2u);
+  for (const TraceConfig::MemoryDumpConfig::Trigger& config : triggers_list) {
     DCHECK(config.periodic_interval_ms);
     if (config.level_of_detail == MemoryDumpLevelOfDetail::DETAILED)
       heavy_dump_period_ms = config.periodic_interval_ms;

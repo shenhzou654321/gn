@@ -12,6 +12,7 @@
 #include "base/task_scheduler/task_tracker.h"
 #include "base/task_scheduler/test_utils.h"
 #include "base/threading/platform_thread.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -22,13 +23,18 @@ namespace {
 class MockSchedulerWorkerThreadDelegate
     : public SchedulerWorkerThread::Delegate {
  public:
-  void OnMainEntry() override {}
+  void OnMainEntry(SchedulerWorkerThread* worker_thread) override {}
   scoped_refptr<Sequence> GetWork(
       SchedulerWorkerThread* worker_thread) override {
     return nullptr;
   }
   void ReEnqueueSequence(scoped_refptr<Sequence> sequence) override {
-    NOTREACHED();
+    ADD_FAILURE() << "This delegate not expect to have sequences to reenqueue.";
+  }
+  TimeDelta GetSleepTimeout() override {
+    ADD_FAILURE() <<
+        "The mock thread is not expected to be woken before it is shutdown";
+    return TimeDelta::Max();
   }
 };
 

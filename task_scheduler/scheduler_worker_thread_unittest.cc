@@ -18,6 +18,7 @@
 #include "base/task_scheduler/sequence.h"
 #include "base/task_scheduler/task.h"
 #include "base/task_scheduler/task_tracker.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -31,7 +32,8 @@ class TaskSchedulerWorkerThreadTest : public testing::TestWithParam<size_t> {
  protected:
   TaskSchedulerWorkerThreadTest()
       : main_entry_called_(true, false),
-        num_get_work_cv_(lock_.CreateConditionVariable()) {}
+        num_get_work_cv_(lock_.CreateConditionVariable()),
+        worker_thread_set_(true, false) {}
 
   void SetUp() override {
     worker_thread_ = SchedulerWorkerThread::Create(
@@ -39,6 +41,7 @@ class TaskSchedulerWorkerThreadTest : public testing::TestWithParam<size_t> {
         WrapUnique(new TestSchedulerWorkerThreadDelegate(this)),
         &task_tracker_);
     ASSERT_TRUE(worker_thread_);
+    worker_thread_set_.Signal();
     main_entry_called_.Wait();
   }
 
@@ -91,7 +94,10 @@ class TaskSchedulerWorkerThreadTest : public testing::TestWithParam<size_t> {
         : outer_(outer) {}
 
     // SchedulerWorkerThread::Delegate:
-    void OnMainEntry() override {
+    void OnMainEntry(SchedulerWorkerThread* worker_thread) override {
+      outer_->worker_thread_set_.Wait();
+      EXPECT_EQ(outer_->worker_thread_.get(), worker_thread);
+
       // Without synchronization, OnMainEntry() could be called twice without
       // generating an error.
       AutoSchedulerLock auto_lock(outer_->lock_);
@@ -160,6 +166,10 @@ class TaskSchedulerWorkerThreadTest : public testing::TestWithParam<size_t> {
                 outer_->created_sequences_.size());
     }
 
+    TimeDelta GetSleepTimeout() override {
+      return TimeDelta::Max();
+    }
+
    private:
     TaskSchedulerWorkerThreadTest* outer_;
   };
@@ -199,6 +209,9 @@ class TaskSchedulerWorkerThreadTest : public testing::TestWithParam<size_t> {
 
   // Number of times that RunTaskCallback() has been called.
   size_t num_run_tasks_ = 0;
+
+  // Signaled after |worker_thread_| is set.
+  WaitableEvent worker_thread_set_;
 
   DISALLOW_COPY_AND_ASSIGN(TaskSchedulerWorkerThreadTest);
 };

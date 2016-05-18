@@ -14,6 +14,7 @@
 #include "base/task_scheduler/scheduler_lock.h"
 #include "base/task_scheduler/sequence.h"
 #include "base/threading/platform_thread.h"
+#include "base/time/time.h"
 
 namespace base {
 namespace internal {
@@ -37,8 +38,8 @@ class BASE_EXPORT SchedulerWorkerThread : public PlatformThread::Delegate {
    public:
     virtual ~Delegate() = default;
 
-    // Called when the main function of the SchedulerWorkerThread enters.
-    virtual void OnMainEntry() = 0;
+    // Called by |worker_thread| when it enters its main function.
+    virtual void OnMainEntry(SchedulerWorkerThread* worker_thread) = 0;
 
     // Called by |worker_thread| to get a Sequence from which to run a Task.
     virtual scoped_refptr<Sequence> GetWork(
@@ -47,6 +48,11 @@ class BASE_EXPORT SchedulerWorkerThread : public PlatformThread::Delegate {
     // Called when |sequence| isn't empty after the SchedulerWorkerThread pops a
     // Task from it. |sequence| is the last Sequence returned by GetWork().
     virtual void ReEnqueueSequence(scoped_refptr<Sequence> sequence) = 0;
+
+    // Called by |worker_thread| to determine how long to sleep before the next
+    // call to GetWork(). GetWork() may be called before this timeout expires
+    // if the thread's WakeUp() method is called.
+    virtual TimeDelta GetSleepTimeout() = 0;
   };
 
   // Creates a SchedulerWorkerThread with priority |thread_priority| that runs
@@ -67,6 +73,8 @@ class BASE_EXPORT SchedulerWorkerThread : public PlatformThread::Delegate {
   // is called, this SchedulerWorkerThread will run Tasks from Sequences
   // returned by the GetWork() method of its delegate until it returns nullptr.
   void WakeUp();
+
+  SchedulerWorkerThread::Delegate* delegate() { return delegate_.get(); }
 
   // Joins this SchedulerWorkerThread. If a Task is already running, it will be
   // allowed to complete its execution. This can only be called once.

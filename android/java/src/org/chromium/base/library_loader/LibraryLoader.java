@@ -4,17 +4,13 @@
 
 package org.chromium.base.library_loader;
 
-import android.annotation.TargetApi;
 import android.content.Context;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageInfo;
 import android.os.AsyncTask;
-import android.os.Build;
 import android.os.SystemClock;
 
 import org.chromium.base.CommandLine;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.PackageUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -132,6 +128,8 @@ public class LibraryLoader {
      *  @param context The context in which the method is called.
      */
     public void ensureInitialized(Context context) throws ProcessInitException {
+        // TODO(wnwen): Move this call appropriately down to the tests that need it.
+        ContextUtils.initApplicationContext(context.getApplicationContext());
         synchronized (sLock) {
             if (mInitialized) {
                 // Already initialized, nothing to do.
@@ -270,7 +268,7 @@ public class LibraryLoader {
                         String libFilePath = System.mapLibraryName(library);
                         if (Linker.isInZipFile()) {
                             // Load directly from the APK.
-                            zipFilePath = getLibraryApkPath(context);
+                            zipFilePath = context.getApplicationInfo().sourceDir;
                             Log.i(TAG, "Loading " + library + " from within " + zipFilePath);
                         } else {
                             // The library is in its own file.
@@ -321,25 +319,6 @@ public class LibraryLoader {
         return splitName.startsWith("abi_");
     }
 
-    // Returns the path to the .apk that holds the native libraries.
-    // This is either the main .apk, or the abi split apk.
-    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-    private static String getLibraryApkPath(Context context) {
-        ApplicationInfo appInfo = context.getApplicationInfo();
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            return appInfo.sourceDir;
-        }
-        PackageInfo packageInfo = PackageUtils.getOwnPackageInfo(context);
-        if (packageInfo.splitNames != null) {
-            for (int i = 0; i < packageInfo.splitNames.length; ++i) {
-                if (isAbiSplit(packageInfo.splitNames[i])) {
-                    return appInfo.splitSourceDirs[i];
-                }
-            }
-        }
-        return appInfo.sourceDir;
-    }
-
     // The WebView requires the Command Line to be switched over before
     // initialization is done. This is okay in the WebView's case since the
     // JNI is already loaded by this point.
@@ -360,6 +339,10 @@ public class LibraryLoader {
         nativeInitCommandLine(CommandLine.getJavaSwitchesOrNull());
         CommandLine.enableNativeProxy();
         mCommandLineSwitched = true;
+
+        // Ensure that native side application context is loaded and in sync with java side. Must do
+        // this here so webview also gets its application context set before fully initializing.
+        ContextUtils.initApplicationContextForNative();
     }
 
     // Invoke base::android::LibraryLoaded in library_loader_hooks.cc
@@ -368,21 +351,11 @@ public class LibraryLoader {
             return;
         }
 
-        // Setup the native command line if necessary.
-        if (!mCommandLineSwitched) {
-            nativeInitCommandLine(CommandLine.getJavaSwitchesOrNull());
-        }
+        ensureCommandLineSwitchedAlreadyLocked();
 
         if (!nativeLibraryLoaded()) {
             Log.e(TAG, "error calling nativeLibraryLoaded");
             throw new ProcessInitException(LoaderErrors.LOADER_ERROR_FAILED_TO_REGISTER_JNI);
-        }
-
-        // The Chrome JNI is registered by now so we can switch the Java
-        // command line over to delegating to native if it's necessary.
-        if (!mCommandLineSwitched) {
-            CommandLine.enableNativeProxy();
-            mCommandLineSwitched = true;
         }
 
         // From now on, keep tracing in sync with native.

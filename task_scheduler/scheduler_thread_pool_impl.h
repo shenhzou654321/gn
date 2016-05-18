@@ -8,12 +8,15 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/base_export.h"
 #include "base/callback.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/strings/string_piece.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/task_runner.h"
 #include "base/task_scheduler/priority_queue.h"
@@ -30,12 +33,16 @@ namespace base {
 namespace internal {
 
 class DelayedTaskManager;
-struct SequenceSortKey;
 class TaskTracker;
 
 // A pool of threads that run Tasks. This class is thread-safe.
 class BASE_EXPORT SchedulerThreadPoolImpl : public SchedulerThreadPool {
  public:
+  enum class IORestriction {
+    ALLOWED,
+    DISALLOWED,
+  };
+
   // Callback invoked when a Sequence isn't empty after a worker thread pops a
   // Task from it.
   using ReEnqueueSequenceCallback = Callback<void(scoped_refptr<Sequence>)>;
@@ -45,15 +52,19 @@ class BASE_EXPORT SchedulerThreadPoolImpl : public SchedulerThreadPool {
   // destroyed after JoinForTesting() has returned.
   ~SchedulerThreadPoolImpl() override;
 
-  // Creates a SchedulerThreadPool with up to |max_threads| threads of priority
-  // |thread_priority|. |re_enqueue_sequence_callback| will be invoked after a
-  // thread of this thread pool tries to run a Task. |task_tracker| is used to
-  // handle shutdown behavior of Tasks. |delayed_task_manager| handles Tasks
-  // posted with a delay. Returns nullptr on failure to create a thread pool
-  // with at least one thread.
+  // Creates a SchedulerThreadPool labeled |name| with up to |max_threads|
+  // threads of priority |thread_priority|. |io_restriction| indicates whether
+  // Tasks on the constructed thread pool are allowed to make I/O calls.
+  // |re_enqueue_sequence_callback| will be invoked after a thread of this
+  // thread pool tries to run a Task. |task_tracker| is used to handle shutdown
+  // behavior of Tasks. |delayed_task_manager| handles Tasks posted with a
+  // delay. Returns nullptr on failure to create a thread pool with at least one
+  // thread.
   static std::unique_ptr<SchedulerThreadPoolImpl> Create(
+      StringPiece name,
       ThreadPriority thread_priority,
       size_t max_threads,
+      IORestriction io_restriction,
       const ReEnqueueSequenceCallback& re_enqueue_sequence_callback,
       TaskTracker* task_tracker,
       DelayedTaskManager* delayed_task_manager);
@@ -72,16 +83,19 @@ class BASE_EXPORT SchedulerThreadPoolImpl : public SchedulerThreadPool {
   void ReEnqueueSequence(scoped_refptr<Sequence> sequence,
                          const SequenceSortKey& sequence_sort_key) override;
   bool PostTaskWithSequence(std::unique_ptr<Task> task,
-                            scoped_refptr<Sequence> sequence) override;
+                            scoped_refptr<Sequence> sequence,
+                            SchedulerWorkerThread* worker_thread) override;
   void PostTaskWithSequenceNow(std::unique_ptr<Task> task,
-                               scoped_refptr<Sequence> sequence) override;
+                               scoped_refptr<Sequence> sequence,
+                               SchedulerWorkerThread* worker_thread) override;
 
  private:
   class SchedulerWorkerThreadDelegateImpl;
 
-  SchedulerThreadPoolImpl(
-      TaskTracker* task_tracker,
-      DelayedTaskManager* delayed_task_manager);
+  SchedulerThreadPoolImpl(StringPiece name,
+                          IORestriction io_restriction,
+                          TaskTracker* task_tracker,
+                          DelayedTaskManager* delayed_task_manager);
 
   bool Initialize(
       ThreadPriority thread_priority,
@@ -94,12 +108,28 @@ class BASE_EXPORT SchedulerThreadPoolImpl : public SchedulerThreadPool {
   // Adds |worker_thread| to |idle_worker_threads_stack_|.
   void AddToIdleWorkerThreadsStack(SchedulerWorkerThread* worker_thread);
 
-  // PriorityQueue from which all threads of this thread pool get work.
-  PriorityQueue shared_priority_queue_;
+  // Removes |worker_thread| from |idle_worker_threads_stack_|.
+  void RemoveFromIdleWorkerThreadsStack(SchedulerWorkerThread* worker_thread);
+
+  // The name of this thread pool, used to label its worker threads.
+  const std::string name_;
 
   // All worker threads owned by this thread pool. Only modified during
   // initialization of the thread pool.
   std::vector<std::unique_ptr<SchedulerWorkerThread>> worker_threads_;
+
+  // Synchronizes access to |next_worker_thread_index_|.
+  SchedulerLock next_worker_thread_index_lock_;
+
+  // Index of the worker thread that will be assigned to the next single-
+  // threaded TaskRunner returned by this pool.
+  size_t next_worker_thread_index_ = 0;
+
+  // PriorityQueue from which all threads of this thread pool get work.
+  PriorityQueue shared_priority_queue_;
+
+  // Indicates whether Tasks on this thread pool are allowed to make I/O calls.
+  const IORestriction io_restriction_;
 
   // Synchronizes access to |idle_worker_threads_stack_| and
   // |idle_worker_threads_stack_cv_for_testing_|. Has |shared_priority_queue_|'s
@@ -116,6 +146,11 @@ class BASE_EXPORT SchedulerThreadPoolImpl : public SchedulerThreadPool {
 
   // Signaled once JoinForTesting() has returned.
   WaitableEvent join_for_testing_returned_;
+
+#if DCHECK_IS_ON()
+  // Signaled when all threads have been created.
+  WaitableEvent threads_created_;
+#endif
 
   TaskTracker* const task_tracker_;
   DelayedTaskManager* const delayed_task_manager_;
