@@ -4,8 +4,8 @@
 
 declare_args() {
   # Version of Visual Studio pointed to by the visual_studio_path.
-  # Use "2013" for Visual Studio 2013.
-  visual_studio_version = ""
+  # Use "2015" for Visual Studio 2015.
+  visual_studio_version = "2015"
 
   # Path to Visual Studio.
   visual_studio_path = ""
