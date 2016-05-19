@@ -185,6 +185,7 @@ def write_ninja(path, root_gen_dir, options):
 
     cflags.extend([
         '-D_FILE_OFFSET_BITS=64',
+        '-D__STDC_CONSTANT_MACROS', '-D__STDC_FORMAT_MACROS',
         '-pthread',
         '-pipe',
         '-fno-exceptions'
