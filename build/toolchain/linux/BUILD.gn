@@ -1,82 +1,86 @@
+# Copyright 2013 The Chromium Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/config/sysroot.gni")
 import("//build/toolchain/gcc_toolchain.gni")
 
-# TODO(tim): This isn't optimal yet
-
-declare_args() {
-  # Path of the GCC C compiler executable.
-  gcc_cc = "gcc"
-
-  # Path of the GCC C++ compiler executable.
-  gcc_cxx = "g++"
-
-  # Path of the Clang C compiler executable.
-  clang_cc = "clang"
-
-  # Path of the Clang C++ compiler executable.
-  clang_cxx = "clang++"
-
-  # Path of the 'readelf' utility.
-  readelf = "readelf"
-
-  # Path of the 'ar' utility.
-  ar = "ar"
-
-  # Path of the 'nm' utility.
-  nm = "nm"
+clang_toolchain("clang_arm") {
+  toolchain_cpu = "arm"
+  toolchain_os = "linux"
+  toolprefix = "arm-linux-gnueabihf-"
 }
 
-gcc_toolchain("clang_x86") {
-  cc = clang_cc
-  cxx = clang_cxx
+gcc_toolchain("arm") {
+  toolprefix = "arm-linux-gnueabihf-"
+
+  cc = "${toolprefix}gcc"
+  cxx = "${toolprefix}g++"
+
+  ar = "${toolprefix}ar"
   ld = cxx
+  readelf = "${toolprefix}readelf"
+  nm = "${toolprefix}nm"
 
-  readelf = readelf
-  ar = ar
-  nm = nm
+  toolchain_cpu = "arm"
+  toolchain_os = "linux"
+  is_clang = false
+}
 
+clang_toolchain("clang_x86") {
   toolchain_cpu = "x86"
-  toolchain_os = target_os
-  is_clang = true
+  toolchain_os = "linux"
 }
 
 gcc_toolchain("x86") {
-  cc = gcc_cc
-  cxx = gcc_cxx
+  cc = "gcc"
+  cxx = "g++"
+
+  readelf = "readelf"
+  nm = "nm"
+  ar = "ar"
   ld = cxx
 
-  readelf = readelf
-  ar = ar
-  nm = nm
-
   toolchain_cpu = "x86"
-  toolchain_os = target_os
+  toolchain_os = "linux"
   is_clang = false
 }
 
-gcc_toolchain("clang_x64") {
-  cc = clang_cc
-  cxx = clang_cxx
-  ld = cxx
-
-  readelf = readelf
-  ar = ar
-  nm = nm
-
+clang_toolchain("clang_x64") {
   toolchain_cpu = "x64"
-  toolchain_os = target_os
-  is_clang = true
+  toolchain_os = "linux"
 }
 
 gcc_toolchain("x64") {
-  cc = gcc_cc
-  cxx = gcc_cxx
+  cc = "gcc"
+  cxx = "g++"
+
+  readelf = "readelf"
+  nm = "nm"
+  ar = "ar"
   ld = cxx
 
-  readelf = readelf
-  ar = ar
-  nm = nm
-
   toolchain_cpu = "x64"
-  toolchain_os = target_os
+  toolchain_os = "linux"
   is_clang = false
+}
+
+clang_toolchain("clang_mipsel") {
+  toolchain_cpu = "mipsel"
+  toolchain_os = "linux"
+}
+
+gcc_toolchain("mipsel") {
+  cc = "mipsel-linux-gnu-gcc"
+  cxx = "mipsel-linux-gnu-g++"
+  ar = "mipsel-linux-gnu-ar"
+  ld = cxx
+  readelf = "mipsel-linux-gnu-readelf"
+  nm = "mipsel-linux-gnu-nm"
+
+  toolchain_cpu = "mipsel"
+  toolchain_os = "linux"
+  is_clang = false
+  cc_wrapper = ""
+  use_goma = false
 }

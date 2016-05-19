@@ -10,12 +10,7 @@ import("//build/toolchain/toolchain.gni")
 assert(is_win)
 
 # This value will be inherited in the toolchain below.
-if (is_lto) {
-  concurrent_links =
-      exec_script("../get_concurrent_links.py", [ "--lto" ], "value")
-} else {
-  concurrent_links = exec_script("../get_concurrent_links.py", [], "value")
-}
+concurrent_links = exec_script("../get_concurrent_links.py", [], "value")
 
 # Parameters:
 #  toolchain_cpu: current_cpu to pass as a build arg
@@ -38,11 +33,17 @@ template("msvc_toolchain") {
     # Object files go in this directory.
     object_subdir = "{{target_out_dir}}/{{label_name}}"
 
+    env_wrapper = "ninja -t msvc -e $env -- "  # Note trailing space.
+
     tool("cc") {
       rspfile = "{{output}}.rsp"
       precompiled_header_type = "msvc"
       pdbname = "{{target_out_dir}}/{{label_name}}_c.pdb"
-      command = "ninja -t msvc -e $env -- $cl /nologo /showIncludes /FC @$rspfile /c {{source}} /Fo{{output}} /Fd$pdbname"
+
+      # Label names may have spaces in them so the pdbname must be quoted. The
+      # source and output don't need to be quoted because GN knows they're a
+      # full file name and will quote automatically when necessary.
+      command = "$env_wrapper$cl /nologo /showIncludes /FC @$rspfile /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
       depsformat = "msvc"
       description = "CC {{output}}"
       outputs = [
@@ -57,7 +58,9 @@ template("msvc_toolchain") {
 
       # The PDB name needs to be different between C and C++ compiled files.
       pdbname = "{{target_out_dir}}/{{label_name}}_cc.pdb"
-      command = "ninja -t msvc -e $env -- $cl /nologo /showIncludes /FC @$rspfile /c {{source}} /Fo{{output}} /Fd$pdbname"
+
+      # See comment in CC tool about quoting.
+      command = "$env_wrapper$cl /nologo /showIncludes /FC @$rspfile /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
       depsformat = "msvc"
       description = "CXX {{output}}"
       outputs = [
@@ -96,14 +99,15 @@ template("msvc_toolchain") {
 
       link_wrapper =
           rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
-      command = "$python_path $link_wrapper $env False lib.exe /nologo /ignore:4221 /OUT:{{output}} @$rspfile"
+      command = "$python_path $link_wrapper $env False lib.exe /nologo {{arflags}} /OUT:{{output}} @$rspfile"
       description = "LIB {{output}}"
       outputs = [
         # Ignore {{output_extension}} and always use .lib, there's no reason to
         # allow targets to override this extension on Windows.
-        "{{target_out_dir}}/{{target_output_name}}.lib",
+        "{{output_dir}}/{{target_output_name}}.lib",
       ]
       default_output_extension = ".lib"
+      default_output_dir = "{{target_out_dir}}"
 
       # The use of inputs_newline is to work around a fixed per-line buffer
       # size in the linker.
@@ -111,20 +115,16 @@ template("msvc_toolchain") {
     }
 
     tool("solink") {
-      dllname = "{{root_out_dir}}/{{target_output_name}}{{output_extension}}"  # e.g. foo.dll
+      dllname = "{{output_dir}}/{{target_output_name}}{{output_extension}}"  # e.g. foo.dll
       libname = "${dllname}.lib"  # e.g. foo.dll.lib
       rspfile = "${dllname}.rsp"
 
       link_wrapper =
           rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
-      link_command = "$python_path $link_wrapper $env False link.exe /nologo /IMPLIB:$libname /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
-
-      # TODO(brettw) support manifests
-      #manifest_command = "$python_path gyp-win-tool manifest-wrapper $env mt.exe -nologo -manifest $manifests -out:${dllname}.manifest"
-      #command = "cmd /c $link_command && $manifest_command"
-      command = link_command
+      command = "$python_path $link_wrapper $env False link.exe /nologo /IMPLIB:$libname /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
 
       default_output_extension = ".dll"
+      default_output_dir = "{{root_out_dir}}"
       description = "LINK(DLL) {{output}}"
       outputs = [
         dllname,
@@ -145,16 +145,15 @@ template("msvc_toolchain") {
     }
 
     tool("solink_module") {
-      dllname = "{{root_out_dir}}/{{target_output_name}}{{output_extension}}"  # e.g. foo.dll
+      dllname = "{{output_dir}}/{{target_output_name}}{{output_extension}}"  # e.g. foo.dll
       rspfile = "${dllname}.rsp"
 
       link_wrapper =
           rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
-      link_command = "$python_path $link_wrapper $env False link.exe /nologo /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
-
-      command = link_command
+      command = "$python_path $link_wrapper $env False link.exe /nologo /DLL /OUT:$dllname /PDB:${dllname}.pdb @$rspfile"
 
       default_output_extension = ".dll"
+      default_output_dir = "{{root_out_dir}}"
       description = "LINK_MODULE(DLL) {{output}}"
       outputs = [
         dllname,
@@ -170,17 +169,13 @@ template("msvc_toolchain") {
 
       link_wrapper =
           rebase_path("//build/toolchain/win/link_wrapper.py", root_build_dir)
-      link_command = "$python_path $link_wrapper $env False link.exe /nologo /OUT:{{output}} /PDB:{{output}}.pdb @$rspfile"
-
-      # TODO(brettw) support manifests
-      #manifest_command = "$python_path gyp-win-tool manifest-wrapper $env mt.exe -nologo -manifest $manifests -out:{{output}}.manifest"
-      #command = "cmd /c $link_command && $manifest_command"
-      command = link_command
+      command = "$python_path $link_wrapper $env False link.exe /nologo /OUT:{{output}} /PDB:{{output}}.pdb @$rspfile"
 
       default_output_extension = ".exe"
+      default_output_dir = "{{root_out_dir}}"
       description = "LINK {{output}}"
       outputs = [
-        "{{root_out_dir}}/{{target_output_name}}{{output_extension}}",
+        "{{output_dir}}/{{target_output_name}}{{output_extension}}",
       ]
 
       # The use of inputs_newline is to work around a fixed per-line buffer
@@ -208,10 +203,15 @@ template("msvc_toolchain") {
         current_os = invoker.toolchain_os
       }
 
-      forward_variables_from(invoker,
-                             [
-                               "is_clang",
-                             ])
+      # These share a name with global variables that are already defined, and
+      # forward_variables_from won't clobber the existing value, so we need to
+      # set it explicitly.
+      if (defined(invoker.is_clang)) {
+        is_clang = invoker.is_clang
+      }
+      if (defined(invoker.is_component_build)) {
+        is_component_build = invoker.is_component_build
+      }
 
       # This value needs to be passed through unchanged.
       host_toolchain = host_toolchain
@@ -219,6 +219,9 @@ template("msvc_toolchain") {
   }
 }
 
+# 32-bit toolchains. Only define these when the target architecture is 32-bit
+# since we don't do any 32-bit cross compiles when targeting 64-bit (the
+# build does generate some 64-bit stuff from 32-bit target builds).
 if (target_cpu == "x86") {
   msvc_toolchain("x86") {
     environment = x86_environment_path

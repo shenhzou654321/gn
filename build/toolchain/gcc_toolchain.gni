@@ -2,17 +2,29 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/nacl/config.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/toolchain/cc_wrapper.gni")
+import("//build/toolchain/goma.gni")
 import("//build/toolchain/toolchain.gni")
+
+# "concurrent_links" is a toolchain variable. By computing it here rather than
+# inside the toolchain, the exec_script will only get run once rather than
+# each time the toolchain template is invoked.
+if (allow_posix_link_time_opt || is_cfi) {
+  concurrent_links_ =
+      exec_script("get_concurrent_links.py", [ "--lto" ], "value")
+} else {
+  concurrent_links_ = exec_script("get_concurrent_links.py", [], "value")
+}
 
 # This template defines a toolchain for something that works like gcc
 # (including clang).
 #
 # It requires the following variables specifying the executables to run:
+#  - ar
 #  - cc
 #  - cxx
-#  - ar
 #  - ld
 # and the following which is used in the toolchain_args
 #  - toolchain_cpu  (What "current_cpu" should be set to when invoking a
@@ -21,6 +33,18 @@ import("//build/toolchain/toolchain.gni")
 #                   build using this toolchain.)
 #
 # Optional parameters that control the tools:
+#
+#  - extra_cflags
+#      Extra flags to be appended when compiling C files (but not C++ files).
+#  - extra_cppflags
+#      Extra flags to be appended when compiling both C and C++ files. "CPP"
+#      stands for "C PreProcessor" in this context, although it can be
+#      used for non-preprocessor flags as well. Not to be confused with
+#      "CXX" (which follows).
+#  - extra_cxxflags
+#      Extra flags to be appended when compiling C++ files (but not C files).
+#  - extra_ldflags
+#      Extra flags to be appended when linking
 #
 #  - libs_section_prefix
 #  - libs_section_postfix
@@ -64,28 +88,45 @@ import("//build/toolchain/toolchain.gni")
 #      secondary toolchains do not want to run with sanitizers.
 #  - is_clang
 #      Whether to use clang instead of gcc.
+#  - is_component_build
+#      Whether to forcibly enable or disable component builds for this
+#      toolchain; if not specified, the toolchain will inherit the
+#      default setting.
+#  - is_nacl_glibc
+#      Whether NaCl code is built using Glibc instead of Newlib.
 #  - cc_wrapper
 #      Override the global cc_wrapper setting. e.g. "ccache" or "icecc".
 #      useful to opt-out of cc_wrapper in a particular toolchain by setting
 #      cc_wrapper = "" in it.
+#  - use_goma
+#      Override the global use_goma setting, useful to opt-out of goma in a
+#      particular toolchain by setting use_gome = false in it.
 #  - use_gold
 #      Override the global use_gold setting, useful if the particular
 #      toolchain has a custom link step that is not actually using Gold.
 template("gcc_toolchain") {
   toolchain(target_name) {
+    assert(defined(invoker.ar), "gcc_toolchain() must specify a \"ar\" value")
     assert(defined(invoker.cc), "gcc_toolchain() must specify a \"cc\" value")
     assert(defined(invoker.cxx), "gcc_toolchain() must specify a \"cxx\" value")
-    assert(defined(invoker.ar), "gcc_toolchain() must specify a \"ar\" value")
     assert(defined(invoker.ld), "gcc_toolchain() must specify a \"ld\" value")
     assert(defined(invoker.toolchain_cpu),
            "gcc_toolchain() must specify a \"toolchain_cpu\"")
     assert(defined(invoker.toolchain_os),
            "gcc_toolchain() must specify a \"toolchain_os\"")
 
+    concurrent_links = concurrent_links_
+
     if (defined(invoker.cc_wrapper)) {
       cc_wrapper = invoker.cc_wrapper
     }
-    if (cc_wrapper != "") {
+    if (defined(invoker.use_goma)) {
+      use_goma = invoker.use_goma
+    }
+    if (use_goma) {
+      assert(cc_wrapper == "", "Goma and cc_wrapper can't be used together.")
+      compiler_prefix = "$goma_dir/gomacc "
+    } else if (cc_wrapper != "") {
       compiler_prefix = cc_wrapper + " "
     } else {
       compiler_prefix = ""
@@ -151,6 +192,30 @@ template("gcc_toolchain") {
       solink_libs_section_postfix = ""
     }
 
+    if (defined(invoker.extra_cflags) && invoker.extra_cflags != "") {
+      extra_cflags = " " + invoker.extra_cflags
+    } else {
+      extra_cflags = ""
+    }
+
+    if (defined(invoker.extra_cppflags) && invoker.extra_cppflags != "") {
+      extra_cppflags = " " + invoker.extra_cppflags
+    } else {
+      extra_cppflags = ""
+    }
+
+    if (defined(invoker.extra_cxxflags) && invoker.extra_cxxflags != "") {
+      extra_cxxflags = " " + invoker.extra_cxxflags
+    } else {
+      extra_cxxflags = ""
+    }
+
+    if (defined(invoker.extra_ldflags) && invoker.extra_ldflags != "") {
+      extra_ldflags = " " + invoker.extra_ldflags
+    } else {
+      extra_ldflags = ""
+    }
+
     # These library switches can apply to all tools below.
     lib_switch = "-l"
     lib_dir_switch = "-L"
@@ -160,7 +225,7 @@ template("gcc_toolchain") {
 
     tool("cc") {
       depfile = "{{output}}.d"
-      command = "$cc -MMD -MF $depfile ${rebuild_string}{{defines}} {{include_dirs}} {{cflags}} {{cflags_c}} -c {{source}} -o {{output}}"
+      command = "$cc -MMD -MF $depfile ${rebuild_string}{{defines}} {{include_dirs}} {{cflags}} {{cflags_c}}${extra_cppflags}${extra_cflags} -c {{source}} -o {{output}}"
       depsformat = "gcc"
       precompiled_header_type = "gcc"
       description = "CC {{output}}"
@@ -171,7 +236,7 @@ template("gcc_toolchain") {
 
     tool("cxx") {
       depfile = "{{output}}.d"
-      command = "$cxx -MMD -MF $depfile ${rebuild_string}{{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} -c {{source}} -o {{output}}"
+      command = "$cxx -MMD -MF $depfile ${rebuild_string}{{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}}${extra_cppflags}${extra_cxxflags} -c {{source}} -o {{output}}"
       depsformat = "gcc"
       precompiled_header_type = "gcc"
       description = "CXX {{output}}"
@@ -192,7 +257,7 @@ template("gcc_toolchain") {
     }
 
     tool("alink") {
-      arflags = ""
+      rspfile = "{{output}}.rsp"
 
       # This needs a Python script to avoid using simple sh features in this
       # command, in case the host does not use a POSIX shell (e.g. compiling
@@ -204,27 +269,32 @@ template("gcc_toolchain") {
       if (!is_freebsd || nm != "nm") {
         rspfile = "{{output}}.rsp"
         rspfile_content = "{{inputs}}"
-        command = "$python_path \"$ar_wrapper\" --output={{output}} --ar=\"$ar\" $arflags rcsD @\"$rspfile\""
+        command = "$python_path \"$ar_wrapper\" --output={{output}} --ar=\"$ar\" {{arflags}} rcsD @\"$rspfile\""
       } else {
-        command = "$python_path \"$ar_wrapper\" --output={{output}} --ar=\"$ar\" $arflags rcsD {{inputs}}"
+        command = "$python_path \"$ar_wrapper\" --output={{output}} --ar=\"$ar\" {{arflags}} rcsD {{inputs}}"
       }
 
       description = "AR {{output}}"
       outputs = [
-        "{{target_out_dir}}/{{target_output_name}}{{output_extension}}",
+        "{{output_dir}}/{{target_output_name}}{{output_extension}}",
       ]
+
+      # Shared libraries go in the target out directory by default so we can
+      # generate different targets with the same name and not have them collide.
+      default_output_dir = "{{target_out_dir}}"
       default_output_extension = ".a"
       output_prefix = "lib"
     }
 
     tool("solink") {
       soname = "{{target_output_name}}{{output_extension}}"  # e.g. "libfoo.so".
-      sofile = "{{root_out_dir}}/$soname"  # Possibly including toolchain dir.
+      sofile = "{{output_dir}}/$soname"  # Possibly including toolchain dir.
       rspfile = sofile + ".rsp"
 
-      unstripped_sofile = sofile
       if (defined(invoker.strip)) {
         unstripped_sofile = "{{root_out_dir}}/lib.unstripped/$soname"
+      } else {
+        unstripped_sofile = sofile
       }
 
       # These variables are not built into GN but are helpers that
@@ -233,7 +303,7 @@ template("gcc_toolchain") {
       # .TOC file, overwrite it, otherwise, don't change it.
       tocfile = sofile + ".TOC"
 
-      link_command = "$ld -shared {{ldflags}} -o \"$unstripped_sofile\" -Wl,-soname=\"$soname\" @\"$rspfile\""
+      link_command = "$ld -shared {{ldflags}}${extra_ldflags} -o \"$unstripped_sofile\" -Wl,-soname=\"$soname\" @\"$rspfile\""
 
       assert(defined(readelf), "to solink you must have a readelf")
       assert(defined(nm), "to solink you must have an nm")
@@ -257,6 +327,8 @@ template("gcc_toolchain") {
       # specifies).
       default_output_extension = default_shlib_extension
 
+      default_output_dir = "{{root_out_dir}}"
+
       output_prefix = "lib"
 
       # Since the above commands only updates the .TOC file when it changes, ask
@@ -279,15 +351,16 @@ template("gcc_toolchain") {
 
     tool("solink_module") {
       soname = "{{target_output_name}}{{output_extension}}"  # e.g. "libfoo.so".
-      sofile = "{{root_out_dir}}/$soname"  # Possibly including toolchain dir.
+      sofile = "{{output_dir}}/$soname"
       rspfile = sofile + ".rsp"
 
-      unstripped_sofile = sofile
       if (defined(invoker.strip)) {
         unstripped_sofile = "{{root_out_dir}}/lib.unstripped/$soname"
+      } else {
+        unstripped_sofile = sofile
       }
 
-      command = "$ld -shared {{ldflags}} -o \"$unstripped_sofile\" -Wl,-soname=\"$soname\" @\"$rspfile\""
+      command = "$ld -shared {{ldflags}}${extra_ldflags} -o \"$unstripped_sofile\" -Wl,-soname=\"$soname\" @\"$rspfile\""
 
       if (defined(invoker.strip)) {
         strip_command = "${invoker.strip} --strip-unneeded -o \"$sofile\" \"$unstripped_sofile\""
@@ -306,6 +379,8 @@ template("gcc_toolchain") {
         default_output_extension = default_shlib_extension
       }
 
+      default_output_dir = "{{root_out_dir}}"
+
       output_prefix = "lib"
 
       outputs = [
@@ -318,7 +393,7 @@ template("gcc_toolchain") {
 
     tool("link") {
       exename = "{{target_output_name}}{{output_extension}}"
-      outfile = "{{root_out_dir}}/$exename"
+      outfile = "{{output_dir}}/$exename"
       rspfile = "$outfile.rsp"
       unstripped_outfile = outfile
 
@@ -327,11 +402,13 @@ template("gcc_toolchain") {
       # specifies).
       default_output_extension = default_executable_extension
 
+      default_output_dir = "{{root_out_dir}}"
+
       if (defined(invoker.strip)) {
         unstripped_outfile = "{{root_out_dir}}/exe.unstripped/$exename"
       }
 
-      command = "$ld {{ldflags}} -o \"$unstripped_outfile\" -Wl,--start-group @\"$rspfile\" {{solibs}} -Wl,--end-group $libs_section_prefix {{libs}} $libs_section_postfix"
+      command = "$ld {{ldflags}}${extra_ldflags} -o \"$unstripped_outfile\" -Wl,--start-group @\"$rspfile\" {{solibs}} -Wl,--end-group $libs_section_prefix {{libs}} $libs_section_postfix"
       if (defined(invoker.strip)) {
         link_wrapper =
             rebase_path("//build/toolchain/gcc_link_wrapper.py", root_build_dir)
@@ -373,12 +450,27 @@ template("gcc_toolchain") {
       target_os = target_os
       target_cpu = target_cpu
 
-      forward_variables_from(invoker,
-                             [
-                               "is_clang",
-                               "use_gold",
-                               "symbol_level",
-                             ])
+      if (defined(invoker.is_clang)) {
+        is_clang = invoker.is_clang
+      }
+      if (defined(invoker.is_component_build)) {
+        is_component_build = invoker.is_component_build
+      }
+      if (defined(invoker.is_nacl_glibc)) {
+        is_nacl_glibc = invoker.is_nacl_glibc
+      }
+      if (defined(invoker.symbol_level)) {
+        symbol_level = invoker.symbol_level
+      }
+      if (defined(invoker.use_allocator)) {
+        use_allocator = invoker.use_allocator
+      }
+      if (defined(invoker.use_gold)) {
+        use_gold = invoker.use_gold
+      }
+      if (defined(invoker.use_sysroot)) {
+        use_sysroot = invoker.use_sysroot
+      }
 
       if (defined(invoker.clear_sanitizers) && invoker.clear_sanitizers) {
         is_asan = false

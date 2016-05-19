@@ -2,9 +2,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/features.gni")
-import("//build/config/sysroot.gni")
-import("//build/config/ui.gni")
+import("//build/config/linux/pkg_config.gni")
+
+group("linux") {
+  visibility = [ "//:optimize_gn_gen" ]
+}
 
 # This is included by reference in the //build/config/compiler config that
 # is applied to all targets. It is here to separate out the logic that is
@@ -28,7 +30,6 @@ config("runtime_library") {
 
 config("fontconfig") {
   visibility = [ "//build/linux:fontconfig" ]
-
   libs = [ "fontconfig" ]
 }
 
@@ -80,4 +81,13 @@ config("xtst") {
 
 config("libresolv") {
   libs = [ "resolv" ]
+}
+
+pkg_config("glib") {
+  packages = [
+    "glib-2.0",
+    "gmodule-2.0",
+    "gobject-2.0",
+    "gthread-2.0",
+  ]
 }
