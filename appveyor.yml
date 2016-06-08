@@ -1,0 +1,21 @@
+version: 1.0.{build}
+clone_depth: 15
+
+install:
+    - git submodule update --init --recursive
+    - git clone --depth=1 --branch=master https://github.com/ninja-build/ninja.git
+
+before_build:
+    - call "C:\Program Files (x86)\Microsoft Visual Studio 14.0\vc\vcvarsall.bat" x86
+    - mkdir ninja-build && cd ninja-build
+    - ..\ninja\configure.py --bootstrap
+    - cd ..
+    - set PATH=%PATH%;%cd%\ninja-build
+
+build_script:
+    - tools\gn\bootstrap\bootstrap.py --no-clean --no-rebuild
+    - out_bootstrap\gn gen out/Release --args="is_debug=false"
+    - ninja -C out/Release gn gn_unittests
+
+test_script:
+    - out\Release\gn_unittests
