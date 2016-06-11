@@ -265,6 +265,7 @@ def write_ninja(path, static_libraries, executables,
           executable, executable_ext,
           ' '.join([src_to_obj(src_file) for src_file in settings['sources']]),
           ' '.join([library_to_a(library) for library in settings['libs']])),
+      '  ldflags = %s' % ' '.join(ldflags),
       '  solibs = %s' % ' '.join(solibs),
       '  libs = %s' % ' '.join([library_to_a(library) for library in settings['libs']]),
     ])
