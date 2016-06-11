@@ -257,8 +257,6 @@ template("gcc_toolchain") {
     }
 
     tool("alink") {
-      rspfile = "{{output}}.rsp"
-
       # This needs a Python script to avoid using simple sh features in this
       # command, in case the host does not use a POSIX shell (e.g. compiling
       # POSIX-like toolchains such as NaCl on Windows).
