@@ -191,9 +191,6 @@ static_library("libxml") {
   ]
 
   public_configs = [ ":libxml_config" ]
-  public_deps = [
-    "//third_party/icu:icuuc",
-  ]
   deps = [
     "//third_party/zlib",
   ]
