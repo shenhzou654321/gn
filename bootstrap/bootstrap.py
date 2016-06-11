@@ -276,24 +276,21 @@ def write_ninja(path, static_libraries, executables,
     f.write(ninja_template)
     f.write('\n'.join(ninja_lines))
 
-def get_default_toolchain():
-  if is_win:
-    # TODO(tim): Detect VS 2015 install location and set these automatically
-    return {'cc': 'cl.exe', 'cxx': 'cl.exe', 'ar': 'lib.exe', 'ld': 'link.exe'}
-  else:
-    return {'cc': 'cc', 'cxx': 'c++', 'ar': 'ar', 'ld': 'cxx'}
-
 def write_gn_ninja(path, root_gen_dir, options):
-  default_toolchain = get_default_toolchain()
+  if is_win:
+    cc = os.environ.get('CC', 'cl.exe')
+    cxx = os.environ.get('CXX', 'cl.exe')
+    ld = os.environ.get('LD', 'link.exe')
+    ar = os.environ.get('AR', 'lib.exe')
+  else:
+    cc = os.environ.get('CC', 'cc')
+    cxx = os.environ.get('CXX', 'c++')
+    ld = os.environ.get('LD', cxx)
+    ar = os.environ.get('AR', 'ar')
 
-  cc = os.environ.get('CC', default_toolchain['cc'])
-  cxx = os.environ.get('CXX', default_toolchain['cxx'])
   cflags = os.environ.get('CFLAGS', '').split()
   cflags_cc = os.environ.get('CXXFLAGS', '').split()
-  ld = os.environ.get('LD', default_toolchain['ld'])
   ldflags = os.environ.get('LDFLAGS', '').split()
-  # TODO(tim): Is there an environment variable for this?
-  ar = default_toolchain['ar']
   include_dirs = [root_gen_dir, SRC_ROOT]
   libs = []
 
