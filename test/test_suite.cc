@@ -16,7 +16,6 @@
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/i18n/icu_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -46,7 +45,6 @@
 #include "base/i18n/rtl.h"
 #if !defined(OS_IOS)
 #include "base/strings/string_util.h"
-#include "third_party/icu/source/common/unicode/uloc.h"
 #endif
 #endif
 
@@ -333,27 +331,6 @@ void TestSuite::Initialize() {
     debug::SetSuppressDebugUI(true);
     logging::SetLogAssertHandler(UnitTestAssertHandler);
   }
-
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kTestDoNotInitializeIcu)) {
-    i18n::InitializeICU();
-  }
-  // On the Mac OS X command line, the default locale is *_POSIX. In Chromium,
-  // the locale is set via an OS X locale API and is never *_POSIX.
-  // Some tests (such as those involving word break iterator) will behave
-  // differently and fail if we use *POSIX locale. Setting it to en_US here
-  // does not affect tests that explicitly overrides the locale for testing.
-  // This can be an issue on all platforms other than Windows.
-  // TODO(jshin): Should we set the locale via an OS X locale API here?
-#if !defined(OS_WIN)
-#if defined(OS_IOS)
-  i18n::SetICUDefaultLocale("en_US");
-#else
-  std::string default_locale(uloc_getDefault());
-  if (EndsWith(default_locale, "POSIX", CompareCase::INSENSITIVE_ASCII))
-    i18n::SetICUDefaultLocale("en_US");
-#endif
-#endif
 
   CatchMaybeTests();
   ResetCommandLine();
