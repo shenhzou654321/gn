@@ -13,9 +13,9 @@ before_build:
     - set PATH=%PATH%;%cd%\ninja-build
 
 build_script:
-    - tools\gn\bootstrap\bootstrap.py --no-clean --no-rebuild
-    - out_bootstrap\gn gen out/Release --args="is_debug=false"
-    - ninja -C out/Release gn gn_unittests
+    - tools\gn\bootstrap\bootstrap.py --no-clean --no-rebuild --debug
+    - out_bootstrap\gn gen out/Debug
+    - ninja -C out/Debug gn gn_unittests
 
 test_script:
-    - out\Release\gn_unittests
+    - out\Debug\gn_unittests
