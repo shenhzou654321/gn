@@ -4,25 +4,20 @@ os:
   - linux
 
 compiler:
-  - clang
   - gcc
 
 addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
-      - llvm-toolchain-precise-3.8
     packages:
       - gcc-4.9
       - g++-4.9
-      - clang-3.8
       - ninja-build
 
 install:
-  # GCC 5
+  # GCC 4.9
   - if [ "$CXX" = "g++" ]; then export CXX="g++-4.9" CC="gcc-4.9" GN_ARGS="gcc_cc=\"gcc-4.9\" gcc_cxx=\"g++-4.9\" is_clang=false"; fi
-  # Clang 3.8
-  - if [ "$CXX" == "clang++" ]; then export CXX="clang++-3.8" CC="clang-3.8" GN_ARGS="clang_cc=\"clang-3.8\" clang_cxx=\"clang++-3.8\" is_clang=true"; fi
 
 script:
   - git submodule update --init --recursive
