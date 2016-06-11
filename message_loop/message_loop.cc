@@ -303,9 +303,9 @@ void MessageLoop::RunUntilIdle() {
 void MessageLoop::QuitWhenIdle() {
   DCHECK_EQ(this, current());
   if (run_loop_) {
-    run_loop_->quit_when_idle_received_ = true;
+    run_loop_->QuitWhenIdle();
   } else {
-    NOTREACHED() << "Must be inside Run to call Quit";
+    NOTREACHED() << "Must be inside Run to call QuitWhenIdle";
   }
 }
 
@@ -389,9 +389,6 @@ MessageLoop::MessageLoop(Type type, MessagePumpFactoryCallback pump_factory)
       in_high_res_mode_(false),
 #endif
       nestable_tasks_allowed_(true),
-#if defined(OS_WIN)
-      os_modal_loop_(false),
-#endif  // OS_WIN
       pump_factory_(pump_factory),
       message_histogram_(NULL),
       run_loop_(NULL),

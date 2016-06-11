@@ -24,6 +24,7 @@
         'allocator/allocator.gyp:allocator',
         'allocator/allocator.gyp:allocator_features#target',
         'base_debugging_flags#target',
+        'base_win_features#target',
         'base_static',
         'base_build_date#target',
         '../testing/gtest.gyp:gtest_prod',
@@ -514,6 +515,7 @@
         'profiler/stack_sampling_profiler_unittest.cc',
         'profiler/tracked_time_unittest.cc',
         'rand_util_unittest.cc',
+        'run_loop_unittest.cc',
         'scoped_clear_errno_unittest.cc',
         'scoped_generic_unittest.cc',
         'scoped_native_library_unittest.cc',
@@ -541,6 +543,7 @@
         'synchronization/cancellation_flag_unittest.cc',
         'synchronization/condition_variable_unittest.cc',
         'synchronization/lock_unittest.cc',
+        'synchronization/read_write_lock_unittest.cc',
         'synchronization/waitable_event_unittest.cc',
         'synchronization/waitable_event_watcher_unittest.cc',
         'sys_info_unittest.cc',
@@ -1019,7 +1022,7 @@
     },
     {
       # GN version: //base/debug:debugging_flags
-      # Since this generates a file, it most only be referenced in the target
+      # Since this generates a file, it must only be referenced in the target
       # toolchain or there will be multiple rules that generate the header.
       # When referenced from a target that might be compiled in the host
       # toolchain, always refer to 'base_debugging_flags#target'.
@@ -1031,6 +1034,27 @@
           'ENABLE_PROFILING=<(profiling)',
         ],
       },
+    },
+    {
+      # GN version: //base/win:base_win_features
+      # Since this generates a file, it must only be referenced in the target
+      # toolchain or there will be multiple rules that generate the header.
+      # When referenced from a target that might be compiled in the host
+      # toolchain, always refer to 'base_win_features#target'.
+      'target_name': 'base_win_features',
+      'conditions': [
+        ['OS=="win"', {
+          'includes': [ '../build/buildflag_header.gypi' ],
+          'variables': {
+            'buildflag_header_path': 'base/win/base_features.h',
+            'buildflag_flags': [
+              'SINGLE_MODULE_MODE_HANDLE_VERIFIER=<(single_module_mode_handle_verifier)',
+            ],
+          },
+        }, {
+          'type': 'none',
+        }],
+      ],
     },
     {
       'type': 'none',
@@ -1383,6 +1407,7 @@
             'android/java/src/org/chromium/base/ApplicationStatus.java',
             'android/java/src/org/chromium/base/AnimationFrameTimeHistogram.java',
             'android/java/src/org/chromium/base/BuildInfo.java',
+            'android/java/src/org/chromium/base/Callback.java',
             'android/java/src/org/chromium/base/CommandLine.java',
             'android/java/src/org/chromium/base/ContentUriUtils.java',
             'android/java/src/org/chromium/base/ContextUtils.java',

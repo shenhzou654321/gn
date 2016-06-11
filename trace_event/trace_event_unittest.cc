@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -96,14 +97,18 @@ class TraceEventTestFixture : public testing::Test {
   }
 
   void CancelTrace() {
-    WaitableEvent flush_complete_event(false, false);
+    WaitableEvent flush_complete_event(
+        WaitableEvent::ResetPolicy::AUTOMATIC,
+        WaitableEvent::InitialState::NOT_SIGNALED);
     CancelTraceAsync(&flush_complete_event);
     flush_complete_event.Wait();
   }
 
   void EndTraceAndFlush() {
     num_flush_callbacks_ = 0;
-    WaitableEvent flush_complete_event(false, false);
+    WaitableEvent flush_complete_event(
+        WaitableEvent::ResetPolicy::AUTOMATIC,
+        WaitableEvent::InitialState::NOT_SIGNALED);
     EndTraceAndFlushAsync(&flush_complete_event);
     flush_complete_event.Wait();
   }
@@ -111,7 +116,9 @@ class TraceEventTestFixture : public testing::Test {
   // Used when testing thread-local buffers which requires the thread initiating
   // flush to have a message loop.
   void EndTraceAndFlushInThreadWithMessageLoop() {
-    WaitableEvent flush_complete_event(false, false);
+    WaitableEvent flush_complete_event(
+        WaitableEvent::ResetPolicy::AUTOMATIC,
+        WaitableEvent::InitialState::NOT_SIGNALED);
     Thread flush_thread("flush");
     flush_thread.Start();
     flush_thread.task_runner()->PostTask(
@@ -199,7 +206,7 @@ void TraceEventTestFixture::OnTraceDataCollected(
   while (root_list->GetSize()) {
     std::unique_ptr<Value> item;
     root_list->Remove(0, &item);
-    trace_parsed_.Append(item.release());
+    trace_parsed_.Append(std::move(item));
   }
 
   if (!has_more_events)
@@ -1609,7 +1616,8 @@ TEST_F(TraceEventTestFixture, DataCapturedOnThread) {
   BeginTrace();
 
   Thread thread("1");
-  WaitableEvent task_complete_event(false, false);
+  WaitableEvent task_complete_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                    WaitableEvent::InitialState::NOT_SIGNALED);
   thread.Start();
 
   thread.task_runner()->PostTask(
@@ -1631,7 +1639,9 @@ TEST_F(TraceEventTestFixture, DataCapturedManyThreads) {
   WaitableEvent* task_complete_events[num_threads];
   for (int i = 0; i < num_threads; i++) {
     threads[i] = new Thread(StringPrintf("Thread %d", i));
-    task_complete_events[i] = new WaitableEvent(false, false);
+    task_complete_events[i] =
+        new WaitableEvent(WaitableEvent::ResetPolicy::AUTOMATIC,
+                          WaitableEvent::InitialState::NOT_SIGNALED);
     threads[i]->Start();
     threads[i]->task_runner()->PostTask(
         FROM_HERE, base::Bind(&TraceManyInstantEvents, i, num_events,
@@ -1678,7 +1688,9 @@ TEST_F(TraceEventTestFixture, ThreadNames) {
   // Now run some trace code on these threads.
   WaitableEvent* task_complete_events[kNumThreads];
   for (int i = 0; i < kNumThreads; i++) {
-    task_complete_events[i] = new WaitableEvent(false, false);
+    task_complete_events[i] =
+        new WaitableEvent(WaitableEvent::ResetPolicy::AUTOMATIC,
+                          WaitableEvent::InitialState::NOT_SIGNALED);
     threads[i]->Start();
     thread_ids[i] = threads[i]->GetThreadId();
     threads[i]->task_runner()->PostTask(
@@ -2823,7 +2835,8 @@ TEST_F(TraceEventTestFixture, SetCurrentThreadBlocksMessageLoopBeforeTracing) {
   BeginTrace();
 
   Thread thread("1");
-  WaitableEvent task_complete_event(false, false);
+  WaitableEvent task_complete_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                    WaitableEvent::InitialState::NOT_SIGNALED);
   thread.Start();
   thread.task_runner()->PostTask(
       FROM_HERE, Bind(&TraceLog::SetCurrentThreadBlocksMessageLoop,
@@ -2833,8 +2846,10 @@ TEST_F(TraceEventTestFixture, SetCurrentThreadBlocksMessageLoopBeforeTracing) {
       FROM_HERE, Bind(&TraceWithAllMacroVariants, &task_complete_event));
   task_complete_event.Wait();
 
-  WaitableEvent task_start_event(false, false);
-  WaitableEvent task_stop_event(false, false);
+  WaitableEvent task_start_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                 WaitableEvent::InitialState::NOT_SIGNALED);
+  WaitableEvent task_stop_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                WaitableEvent::InitialState::NOT_SIGNALED);
   thread.task_runner()->PostTask(
       FROM_HERE, Bind(&BlockUntilStopped, &task_start_event, &task_stop_event));
   task_start_event.Wait();
@@ -2895,15 +2910,18 @@ TEST_F(TraceEventTestFixture, SetCurrentThreadBlocksMessageLoopAfterTracing) {
   BeginTrace();
 
   Thread thread("1");
-  WaitableEvent task_complete_event(false, false);
+  WaitableEvent task_complete_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                    WaitableEvent::InitialState::NOT_SIGNALED);
   thread.Start();
 
   thread.task_runner()->PostTask(
       FROM_HERE, Bind(&TraceWithAllMacroVariants, &task_complete_event));
   task_complete_event.Wait();
 
-  WaitableEvent task_start_event(false, false);
-  WaitableEvent task_stop_event(false, false);
+  WaitableEvent task_start_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                 WaitableEvent::InitialState::NOT_SIGNALED);
+  WaitableEvent task_stop_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                WaitableEvent::InitialState::NOT_SIGNALED);
   thread.task_runner()->PostTask(
       FROM_HERE, Bind(&SetBlockingFlagAndBlockUntilStopped, &task_start_event,
                       &task_stop_event));
@@ -2920,7 +2938,8 @@ TEST_F(TraceEventTestFixture, ThreadOnceBlocking) {
   BeginTrace();
 
   Thread thread("1");
-  WaitableEvent task_complete_event(false, false);
+  WaitableEvent task_complete_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                    WaitableEvent::InitialState::NOT_SIGNALED);
   thread.Start();
 
   thread.task_runner()->PostTask(
@@ -2928,8 +2947,10 @@ TEST_F(TraceEventTestFixture, ThreadOnceBlocking) {
   task_complete_event.Wait();
   task_complete_event.Reset();
 
-  WaitableEvent task_start_event(false, false);
-  WaitableEvent task_stop_event(false, false);
+  WaitableEvent task_start_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                 WaitableEvent::InitialState::NOT_SIGNALED);
+  WaitableEvent task_stop_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                WaitableEvent::InitialState::NOT_SIGNALED);
   thread.task_runner()->PostTask(
       FROM_HERE, Bind(&BlockUntilStopped, &task_start_event, &task_stop_event));
   task_start_event.Wait();
@@ -3097,6 +3118,13 @@ TEST_F(TraceEventTestFixture, SyntheticDelayConfigurationToString) {
   const char filter[] = "DELAY(test.Delay;16;oneshot)";
   TraceConfig config(filter, "");
   EXPECT_EQ(filter, config.ToCategoryFilterString());
+}
+
+TEST_F(TraceEventTestFixture, ClockSyncEventsAreAlwaysAddedToTrace) {
+  BeginSpecificTrace("-*");
+  TRACE_EVENT_CLOCK_SYNC_RECEIVER(1);
+  EndTraceAndFlush();
+  EXPECT_TRUE(FindNamePhase("clock_sync", "c"));
 }
 
 }  // namespace trace_event

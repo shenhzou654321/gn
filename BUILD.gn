@@ -148,6 +148,8 @@ component("base") {
     "android/base_jni_registrar.h",
     "android/build_info.cc",
     "android/build_info.h",
+    "android/callback_android.cc",
+    "android/callback_android.h",
     "android/command_line_android.cc",
     "android/command_line_android.h",
     "android/content_uri_utils.cc",
@@ -540,7 +542,6 @@ component("base") {
     "metrics/user_metrics.cc",
     "metrics/user_metrics.h",
     "metrics/user_metrics_action.h",
-    "move.h",
     "native_library.h",
     "native_library_ios.mm",
     "native_library_mac.mm",
@@ -675,9 +676,8 @@ component("base") {
     "sequenced_task_runner.cc",
     "sequenced_task_runner.h",
     "sequenced_task_runner_helpers.h",
+    "sha1.cc",
     "sha1.h",
-    "sha1_portable.cc",
-    "sha1_win.cc",
     "single_thread_task_runner.h",
     "stl_util.h",
     "strings/latin1_string_conversions.cc",
@@ -730,6 +730,10 @@ component("base") {
     "synchronization/lock_impl.h",
     "synchronization/lock_impl_posix.cc",
     "synchronization/lock_impl_win.cc",
+    "synchronization/read_write_lock.h",
+    "synchronization/read_write_lock_nacl.cc",
+    "synchronization/read_write_lock_posix.cc",
+    "synchronization/read_write_lock_win.cc",
     "synchronization/spin_wait.h",
     "synchronization/waitable_event.h",
     "synchronization/waitable_event_posix.cc",
@@ -897,6 +901,8 @@ component("base") {
     "trace_event/memory_dump_request_args.h",
     "trace_event/memory_dump_session_state.cc",
     "trace_event/memory_dump_session_state.h",
+    "trace_event/memory_infra_background_whitelist.cc",
+    "trace_event/memory_infra_background_whitelist.h",
     "trace_event/process_memory_dump.cc",
     "trace_event/process_memory_dump.h",
     "trace_event/process_memory_maps.cc",
@@ -1122,6 +1128,7 @@ component("base") {
       "process/process_posix.cc",
       "scoped_native_library.cc",
       "sync_socket_posix.cc",
+      "synchronization/read_write_lock_posix.cc",
       "sys_info.cc",
       "sys_info_posix.cc",
       "trace_event/trace_event_system_stats_monitor.cc",
@@ -1156,6 +1163,7 @@ component("base") {
       "os_compat_nacl.cc",
       "os_compat_nacl.h",
       "rand_util_nacl.cc",
+      "synchronization/read_write_lock_nacl.cc",
     ]
   }
 
@@ -1169,13 +1177,12 @@ component("base") {
     sources -= [
       "message_loop/message_pump_libevent.cc",
       "strings/string16.cc",
-
-      # Not using sha1_win.cc because it may have caused a
-      # regression to page cycler moz.
-      "sha1_win.cc",
     ]
 
-    deps += [ "//base/trace_event/etw_manifest:chrome_events_win" ]
+    deps += [
+      "//base/trace_event/etw_manifest:chrome_events_win",
+      "//base/win:base_win_features",
+    ]
 
     if (is_component_build) {
       # Copy the VS runtime DLLs into the isolate so that they don't have to be
@@ -1254,7 +1261,6 @@ component("base") {
 
     libs = [
       "cfgmgr32.lib",
-      "netapi32.lib",
       "powrprof.lib",
       "setupapi.lib",
       "userenv.lib",
@@ -1654,10 +1660,11 @@ if (is_win) {
     ]
     deps = [
       ":base",
+      "//base/win:base_win_features",
     ]
   }
 
-  if (target_cpu == "x64") {
+  if (current_cpu == "x64") {
     # Must be a shared library so that it can be unloaded during testing.
     shared_library("base_profiler_test_support_library") {
       sources = [
@@ -1850,6 +1857,7 @@ test("base_unittests") {
     "profiler/stack_sampling_profiler_unittest.cc",
     "profiler/tracked_time_unittest.cc",
     "rand_util_unittest.cc",
+    "run_loop_unittest.cc",
     "scoped_clear_errno_unittest.cc",
     "scoped_generic_unittest.cc",
     "scoped_native_library_unittest.cc",
@@ -1877,6 +1885,7 @@ test("base_unittests") {
     "synchronization/cancellation_flag_unittest.cc",
     "synchronization/condition_variable_unittest.cc",
     "synchronization/lock_unittest.cc",
+    "synchronization/read_write_lock_unittest.cc",
     "synchronization/waitable_event_unittest.cc",
     "synchronization/waitable_event_watcher_unittest.cc",
     "sys_info_unittest.cc",
@@ -2083,7 +2092,7 @@ test("base_unittests") {
 
   if (is_win) {
     deps += [ "//base:scoped_handle_test_dll" ]
-    if (target_cpu == "x64") {
+    if (current_cpu == "x64") {
       sources += [ "profiler/win32_stack_frame_unwinder_unittest.cc" ]
       deps += [ ":base_profiler_test_support_library" ]
     }
@@ -2154,6 +2163,7 @@ if (is_android) {
       "android/java/src/org/chromium/base/ApkAssets.java",
       "android/java/src/org/chromium/base/ApplicationStatus.java",
       "android/java/src/org/chromium/base/BuildInfo.java",
+      "android/java/src/org/chromium/base/Callback.java",
       "android/java/src/org/chromium/base/CommandLine.java",
       "android/java/src/org/chromium/base/ContentUriUtils.java",
       "android/java/src/org/chromium/base/ContextUtils.java",
@@ -2299,6 +2309,7 @@ if (is_android) {
     ]
     java_files = [
       "test/android/javatests/src/org/chromium/base/test/BaseActivityInstrumentationTestCase.java",
+      "test/android/javatests/src/org/chromium/base/test/BaseChromiumInstrumentationTestRunner.java",
       "test/android/javatests/src/org/chromium/base/test/BaseInstrumentationTestRunner.java",
       "test/android/javatests/src/org/chromium/base/test/BaseTestResult.java",
       "test/android/javatests/src/org/chromium/base/test/util/AdvancedMockContext.java",
@@ -2383,6 +2394,11 @@ if (is_android) {
       "android/java/templates/BuildConfig.template",
     ]
     package_name = "org/chromium/base"
+
+    defines = []
+    if (!is_java_debug) {
+      defines += [ "NDEBUG" ]
+    }
   }
 
   # GYP: //base/base.gyp:base_native_libraries_gen
