@@ -13,10 +13,6 @@ Note that this project is work-in-progress and not affliated with Chromium or Go
 ### With GN installed
 
 ```
-# Windows
-gn gen out/Release --args="visual_studio_version=\"2015\" is_debug=false"
-
-# POSIX
 gn gen out/Release --args="is_debug=false"
 
 ninja -C out/Release gn
@@ -38,3 +34,6 @@ paths (see base/base_paths_*.cc: `DIR_SOURCE_ROOT` handling)
 ```
 tools/gn/bootstrap/bootstrap.py
 ```
+
+Note: On Windows bootstrap.py expects to be run inside a
+Visual Studio Command Prompt (i.e. vcvarsall has been run).
