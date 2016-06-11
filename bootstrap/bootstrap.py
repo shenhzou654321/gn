@@ -172,6 +172,9 @@ def build_gn_with_ninja_manually(tempdir, options):
     ])
 
   if is_win:
+    write_buildflag_header_manually(root_gen_dir, 'base/win/base_features.h',
+        {'SINGLE_MODULE_MODE_HANDLE_VERIFIER': 'true'})
+
     write_compiled_message(root_gen_dir,
                            "base/trace_event/etw_manifest/chrome_events_win.man")
 
@@ -683,6 +686,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/sync_socket_win.cc',
         'base/synchronization/condition_variable_win.cc',
         'base/synchronization/lock_impl_win.cc',
+        'base/synchronization/read_write_lock_win.cc',
         'base/synchronization/waitable_event_watcher_win.cc',
         'base/synchronization/waitable_event_win.cc',
         'base/sys_info_win.cc',
