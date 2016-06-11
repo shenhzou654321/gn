@@ -24,15 +24,4 @@ int64_t SysInfo::AmountOfPhysicalMemory() {
   return static_cast<int64_t>(pages) * page_size;
 }
 
-// static
-uint64_t SysInfo::MaxSharedMemorySize() {
-  size_t limit;
-  size_t size = sizeof(limit);
-  if (sysctlbyname("kern.ipc.shmmax", &limit, &size, NULL, 0) < 0) {
-    NOTREACHED();
-    return 0;
-  }
-  return static_cast<uint64_t>(limit);
-}
-
 }  // namespace base

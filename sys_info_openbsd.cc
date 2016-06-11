@@ -52,18 +52,6 @@ int64_t SysInfo::AmountOfAvailablePhysicalMemory() {
 }
 
 // static
-uint64_t SysInfo::MaxSharedMemorySize() {
-  int mib[] = { CTL_KERN, KERN_SHMINFO, KERN_SHMINFO_SHMMAX };
-  size_t limit;
-  size_t size = sizeof(limit);
-  if (sysctl(mib, arraysize(mib), &limit, &size, NULL, 0) < 0) {
-    NOTREACHED();
-    return 0;
-  }
-  return static_cast<uint64_t>(limit);
-}
-
-// static
 std::string SysInfo::CPUModelName() {
   int mib[] = { CTL_HW, HW_MODEL };
   char name[256];
