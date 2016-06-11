@@ -736,7 +736,7 @@
   --root-target=<target_name>
       Name of the root target for which the QtCreator project will be
       generated to contain files of it and its dependencies. If unset, 
-      the whole build graph will be omitted.
+      the whole build graph will be emitted.
 
 
 ```
@@ -1417,6 +1417,12 @@
   This target can be used on all platforms though it is designed only to
   generate iOS/OS X bundle. In cross-platform projects, it is advised to
   put it behind iOS/Mac conditionals.
+
+  If a create_bundle is specified as a data_deps for another target, the
+  bundle is considered a leaf, and its public and private dependencies
+  will not contribute to any data or data_deps. Required runtime
+  dependencies should be placed in the bundle. A create_bundle can
+  declare its own explicit data and data_deps, however.
 
 ```
 
@@ -2137,6 +2143,47 @@
 
 
 ```
+## **pool**: Defines a pool object.
+
+```
+  Pool objects can be applied to a tool to limit the parallelism of the
+  build. This object has a single property "depth" corresponding to
+  the number of tasks that may run simultaneously.
+
+  As the file containing the pool definition may be executed in the
+  context of more than one toolchain it is recommended to specify an
+  explicit toolchain when defining and referencing a pool.
+
+  A pool is referenced by its label just like a target.
+
+```
+
+### **Variables**
+
+```
+  depth*
+  * = required
+
+```
+
+### **Example**
+
+```
+  if (current_toolchain == default_toolchain) {
+    pool("link_pool") {
+      depth = 1
+    }
+  }
+
+  toolchain("toolchain") {
+    tool("link") {
+      command = "..."
+      pool = ":link_pool($default_toolchain)")
+    }
+  }
+
+
+```
 ## **print**: Prints to the console.
 
 ```
@@ -2558,6 +2605,7 @@
 
 ### **Variables**
 
+### **complete_static_lib**
 ```
   Flags: cflags, cflags_c, cflags_cc, cflags_objc, cflags_objcc,
          asmflags, defines, include_dirs, ldflags, lib_dirs, libs,
@@ -2905,6 +2953,14 @@
             "{{output_dir}}/{{target_output_name}}{{output_extension}}",
             "{{output_dir}}/{{target_output_name}}.lib",
           ]
+
+    pool [label, optional]
+
+        Label of the pool to use for the tool. Pools are used to limit
+        the number of tasks that can execute concurrently during the
+        build.
+
+        See also "gn help pool".
 
     link_output  [string with substitutions]
     depend_output  [string with substitutions]
@@ -4397,6 +4453,9 @@
   However, no verification is done on these so GN doesn't enforce this.
   The paths are just rebased and passed along when requested.
 
+  Note: On iOS and OS X, create_bundle targets will not be recursed
+  into when gathering data. See "gn help create_bundle" for details.
+
   See "gn help runtime_deps" for how these are used.
 
 
@@ -4412,6 +4471,10 @@
 
   This is normally used for things like plugins or helper programs that
   a target needs at runtime.
+
+  Note: On iOS and OS X, create_bundle targets will not be recursed
+  into when gathering data_deps. See "gn help create_bundle" for
+  details.
 
   See also "gn help deps" and "gn help data".
 
