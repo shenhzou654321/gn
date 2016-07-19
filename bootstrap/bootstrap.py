@@ -37,8 +37,11 @@ is_posix = is_linux or is_mac or is_freebsd
 
 def check_call(cmd, **kwargs):
   logging.debug('Running: %s', ' '.join(cmd))
-  if cmd and cmd[0].endswith('.py'):
+
+  # With shell=False, subprocess expects an executable on Windows
+  if is_win and cmd and cmd[0].endswith('.py'):
     cmd.insert(0, sys.executable)
+
   subprocess.check_call(cmd, cwd=GN_ROOT, **kwargs)
 
 def mkdir_p(path):
@@ -136,6 +139,9 @@ def write_compiled_message(root_gen_dir, source):
 def write_buildflag_header_manually(root_gen_dir, header, flags):
   mkdir_p(os.path.join(root_gen_dir, os.path.dirname(header)))
 
+  # Don't use tempfile.NamedTemporaryFile() here.
+  # It doesn't work correctly on Windows.
+  # see: http://bugs.python.org/issue14243
   temp_path = os.path.join(root_gen_dir, header + '.tmp')
   with open(temp_path, 'w') as f:
     f.write('--flags')
@@ -176,9 +182,10 @@ def build_gn_with_ninja_manually(tempdir, options):
         {'SINGLE_MODULE_MODE_HANDLE_VERIFIER': 'true'})
 
     write_compiled_message(root_gen_dir,
-                           "base/trace_event/etw_manifest/chrome_events_win.man")
+        'base/trace_event/etw_manifest/chrome_events_win.man')
 
-  write_gn_ninja(os.path.join(tempdir, 'build.ninja'), root_gen_dir, options)
+  write_gn_ninja(os.path.join(tempdir, 'build.ninja'),
+                 root_gen_dir, options)
   cmd = ['ninja', '-C', tempdir]
   if options.verbose:
     cmd.append('-v')
@@ -193,10 +200,10 @@ def build_gn_with_ninja_manually(tempdir, options):
 
   check_call(cmd)
 
-def write_ninja(path, static_libraries, executables,
-                cc, cxx, ar, ld,
-                cflags=[], cflags_cc=[], ldflags=[],
-                include_dirs=[], solibs=[]):
+def write_generic_ninja(path, static_libraries, executables,
+                        cc, cxx, ar, ld,
+                        cflags=[], cflags_cc=[], ldflags=[],
+                        include_dirs=[], solibs=[]):
   ninja_header_lines = [
     'cc = ' + cc,
     'cxx = ' + cxx,
@@ -267,7 +274,8 @@ def write_ninja(path, static_libraries, executables,
           ' '.join([library_to_a(library) for library in settings['libs']])),
       '  ldflags = %s' % ' '.join(ldflags),
       '  solibs = %s' % ' '.join(solibs),
-      '  libs = %s' % ' '.join([library_to_a(library) for library in settings['libs']]),
+      '  libs = %s' % ' '.join(
+          [library_to_a(library) for library in settings['libs']]),
     ])
 
   ninja_lines.append('')  # Make sure the file ends with a newline.
@@ -736,8 +744,8 @@ def write_gn_ninja(path, root_gen_dir, options):
   # we just build static libraries that GN needs
   executables['gn']['libs'].extend(static_libraries.keys())
 
-  write_ninja(path, static_libraries, executables, cc, cxx, ar, ld,
-              cflags, cflags_cc, ldflags, include_dirs, libs)
+  write_generic_ninja(path, static_libraries, executables, cc, cxx, ar, ld,
+                      cflags, cflags_cc, ldflags, include_dirs, libs)
 
 def build_gn_with_gn(temp_gn, build_dir, options):
   gn_gen_args = options.gn_gen_args or ''

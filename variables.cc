@@ -44,6 +44,38 @@ const char kHostOs_Help[] =
     "  - \"mac\"\n"
     "  - \"win\"\n";
 
+const char kInvoker[] = "invoker";
+const char kInvoker_HelpShort[] =
+    "invoker: [string] The invoking scope inside a template.";
+const char kInvoker_Help[] =
+    "invoker: [string] The invoking scope inside a template.\n"
+    "\n"
+    "  Inside a template invocation, this variable refers to the scope of\n"
+    "  the invoker of the template. Outside of template invocations, this\n"
+    "  variable is undefined.\n"
+    "\n"
+    "  All of the variables defined inside the template invocation are\n"
+    "  accessible as members of the \"invoker\" scope. This is the way that\n"
+    "  templates read values set by the callers.\n"
+    "\n"
+    "  This is often used with \"defined\" to see if a value is set on the\n"
+    "  invoking scope.\n"
+    "\n"
+    "  See \"gn help template\" for more examples.\n"
+    "\n"
+    "Example\n"
+    "\n"
+    "  template(\"my_template\") {\n"
+    "    print(invoker.sources)       # Prints [ \"a.cc\", \"b.cc\" ]\n"
+    "    print(defined(invoker.foo))  # Prints false.\n"
+    "    print(defined(invoker.bar))  # Prints true.\n"
+    "  }\n"
+    "\n"
+    "  my_template(\"doom_melon\") {\n"
+    "    sources = [ \"a.cc\", \"b.cc\" ]\n"
+    "    bar = 123\n"
+    "  }\n";
+
 const char kTargetCpu[] = "target_cpu";
 const char kTargetCpu_HelpShort[] =
     "target_cpu: [string] The desired cpu architecture for the build.";
@@ -75,6 +107,47 @@ const char kTargetCpu_Help[] =
     "  - \"arm\"\n"
     "  - \"arm64\"\n"
     "  - \"mipsel\"\n";
+
+const char kTargetName[] = "target_name";
+const char kTargetName_HelpShort[] =
+    "target_name: [string] The name of the current target.";
+const char kTargetName_Help[] =
+    "target_name: [string] The name of the current target.\n"
+    "\n"
+    "  Inside a target or template invocation, this variable refers to the\n"
+    "  name given to the target or template invocation. Outside of these,\n"
+    "  this variable is undefined.\n"
+    "\n"
+    "  This is most often used in template definitions to name targets\n"
+    "  defined in the template based on the name of the invocation. This\n"
+    "  is necessary both to ensure generated targets have unique names and\n"
+    "  to generate a target with the exact name of the invocation that\n"
+    "  other targets can depend on.\n"
+    "\n"
+    "  Be aware that this value will always reflect the innermost scope. So\n"
+    "  when defining a target inside a template, target_name will refer to\n"
+    "  the target rather than the template invocation. To get the name of the\n"
+    "  template invocation in this case, you should save target_name to a\n"
+    "  temporary variable outside of any target definitions.\n"
+    "\n"
+    "  See \"gn help template\" for more examples.\n"
+    "\n"
+    "Example\n"
+    "\n"
+    "  executable(\"doom_melon\") {\n"
+    "    print(target_name)    # Prints \"doom_melon\".\n"
+    "  }\n"
+    "\n"
+    "  template(\"my_template\") {\n"
+    "    print(target_name)    # Prints \"space_ray\" when invoked below.\n"
+    "\n"
+    "    executable(target_name + \"_impl\") {\n"
+    "      print(target_name)  # Prints \"space_ray_impl\".\n"
+    "    }\n"
+    "  }\n"
+    "\n"
+    "  my_template(\"space_ray\") {\n"
+    "  }\n";
 
 const char kTargetOs[] = "target_os";
 const char kTargetOs_HelpShort[] =
@@ -648,6 +721,54 @@ const char kCheckIncludes_Help[] =
     "    ...\n"
     "  }\n";
 
+const char kCodeSigningArgs[] = "code_signing_args";
+const char kCodeSigningArgs_HelpShort[] =
+    "code_signing_args: [string list] Arguments passed to code signing script.";
+const char kCodeSigningArgs_Help[] =
+    "code_signing_args: [string list] Arguments passed to code signing "
+        "script.\n"
+    "\n"
+    "  For create_bundle targets, code_signing_args is the list of arguments\n"
+    "  to pass to the code signing script. Typically you would use source\n"
+    "  expansion (see \"gn help source_expansion\") to insert the source file\n"
+    "  names.\n"
+    "\n"
+    "  See also \"gn help create_bundle\".\n";
+
+const char kCodeSigningScript[] = "code_signing_script";
+const char kCodeSigningScript_HelpShort[] =
+    "code_signing_script: [file name] Script for code signing.";
+const char kCodeSigningScript_Help[] =
+    "code_signing_script: [file name] Script for code signing."
+    "\n"
+    "  An absolute or buildfile-relative file name of a Python script to run\n"
+    "  for a create_bundle target to perform code signing step.\n"
+    "\n"
+    "  See also \"gn help create_bundle\".\n";
+
+const char kCodeSigningSources[] = "code_signing_sources";
+const char kCodeSigningSources_HelpShort[] =
+    "code_signing_sources: [file list] Sources for code signing step.";
+const char kCodeSigningSources_Help[] =
+    "code_signing_sources: [file list] Sources for code signing step.\n"
+    "\n"
+    "  A list of files used as input for code signing script step of a\n"
+    "  create_bundle target. Non-absolute paths will be resolved relative to\n"
+    "  the current build file.\n"
+    "\n"
+    "  See also \"gn help create_bundle\".\n";
+
+const char kCodeSigningOutputs[] = "code_signing_outputs";
+const char kCodeSigningOutputs_HelpShort[] =
+    "code_signing_outputs: [file list] Output files for code signing step.";
+const char kCodeSigningOutputs_Help[] =
+    "code_signing_outputs: [file list] Output files for code signing step.\n"
+    "\n"
+    "  Outputs from the code signing step of a create_bundle target. Must\n"
+    "  refer to files in the build directory.\n"
+    "\n"
+    "  See also \"gn help create_bundle\".\n";
+
 const char kCompleteStaticLib[] = "complete_static_lib";
 const char kCompleteStaticLib_HelpShort[] =
     "complete_static_lib: [boolean] Links all deps into a static library.";
@@ -986,7 +1107,7 @@ const char kInputs_Help[] =
     "\n"
     "  The problem happens if a file is ever removed because the inputs are\n"
     "  not listed on the command line to the script. Because the script\n"
-    "  hasn't changed and all inputs are up-to-date, the script will not\n"
+    "  hasn't changed and all inputs are up to date, the script will not\n"
     "  re-run and you will get a stale build. Instead, either list all\n"
     "  inputs on the command line to the script, or if there are many, create\n"
     "  a separate list file that the script reads. As long as this file is\n"
@@ -1000,13 +1121,11 @@ const char kInputs_Help[] =
     "  files in a target are compiled. So if you depend on generated headers,\n"
     "  you do not typically need to list them in the inputs section.\n"
     "\n"
-    "  Inputs for binary targets will be treated as order-only dependencies,\n"
-    "  meaning that they will be forced up-to-date before compiling or\n"
-    "  any files in the target, but changes in the inputs will not\n"
-    "  necessarily force the target to compile. This is because it is\n"
-    "  expected that the compiler will report the precise list of input\n"
-    "  dependencies required to recompile each file once the initial build\n"
-    "  is done.\n"
+    "  Inputs for binary targets will be treated as implicit dependencies,\n"
+    "  meaning that changes in any of the inputs will force all sources in\n"
+    "  the target to be recompiled. If an input only applies to a subset of\n"
+    "  source files, you may want to split those into a separate target to\n"
+    "  avoid unnecessary recompiles.\n"
     "\n"
     "Example\n"
     "\n"
@@ -1667,6 +1786,7 @@ const VariableInfoMap& GetBuiltinVariables() {
     INSERT_VARIABLE(DefaultToolchain)
     INSERT_VARIABLE(HostCpu)
     INSERT_VARIABLE(HostOs)
+    INSERT_VARIABLE(Invoker)
     INSERT_VARIABLE(PythonPath)
     INSERT_VARIABLE(RootBuildDir)
     INSERT_VARIABLE(RootGenDir)
@@ -1674,6 +1794,7 @@ const VariableInfoMap& GetBuiltinVariables() {
     INSERT_VARIABLE(TargetCpu)
     INSERT_VARIABLE(TargetOs)
     INSERT_VARIABLE(TargetGenDir)
+    INSERT_VARIABLE(TargetName)
     INSERT_VARIABLE(TargetOutDir)
   }
   return info_map;
@@ -1698,6 +1819,10 @@ const VariableInfoMap& GetTargetVariables() {
     INSERT_VARIABLE(CflagsObjC)
     INSERT_VARIABLE(CflagsObjCC)
     INSERT_VARIABLE(CheckIncludes)
+    INSERT_VARIABLE(CodeSigningArgs)
+    INSERT_VARIABLE(CodeSigningScript)
+    INSERT_VARIABLE(CodeSigningSources)
+    INSERT_VARIABLE(CodeSigningOutputs)
     INSERT_VARIABLE(CompleteStaticLib)
     INSERT_VARIABLE(Configs)
     INSERT_VARIABLE(Console)

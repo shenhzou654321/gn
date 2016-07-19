@@ -325,9 +325,6 @@ void XcodeWriter::CreateSourcesProject(
     TargetOsType target_os) {
   std::vector<SourceFile> sources;
   for (const Target* target : targets) {
-    if (!target->settings()->is_default())
-      continue;
-
     for (const SourceFile& source : target->sources()) {
       if (source.is_system_absolute())
         continue;
@@ -422,7 +419,7 @@ void XcodeWriter::WriteProjectContent(std::ostream& out, PBXProject* project) {
               [](const PBXObject* a, const PBXObject* b) {
                 return a->id() < b->id();
               });
-    for (const auto& object : pair.second) {
+    for (auto* object : pair.second) {
       object->Print(out, 2);
     }
     out << "/* End " << ToString(pair.first) << " section */\n";
