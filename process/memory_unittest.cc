@@ -11,6 +11,7 @@
 #include <limits>
 
 #include "base/allocator/allocator_check.h"
+#include "base/allocator/features.h"
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
 #include "base/memory/aligned_memory.h"
@@ -26,7 +27,6 @@
 #endif
 #if defined(OS_MACOSX)
 #include <malloc/malloc.h>
-#include "base/mac/mac_util.h"
 #include "base/process/memory_unittest_mac.h"
 #endif
 #if defined(OS_LINUX)
@@ -87,8 +87,8 @@ TEST(MemoryTest, AllocatorShimWorking) {
 // Don't test these on ASan/TSan/MSan configurations: only test the real
 // allocator.
 // Windows only supports these tests with the allocator shim in place.
-#if !defined(OS_ANDROID) && !defined(OS_OPENBSD) &&   \
-    !(defined(OS_WIN) && !defined(ALLOCATOR_SHIM)) && \
+#if !defined(OS_ANDROID) && !defined(OS_OPENBSD) && \
+    BUILDFLAG(ENABLE_WIN_ALLOCATOR_SHIM_TESTS) &&   \
     !defined(MEMORY_TOOL_REPLACES_ALLOCATOR)
 
 namespace {
@@ -409,13 +409,6 @@ class OutOfMemoryHandledTest : public OutOfMemoryTest {
 // under sanitizer tools.
 #if !defined(MEMORY_TOOL_REPLACES_ALLOCATOR)
 TEST_F(OutOfMemoryHandledTest, UncheckedMalloc) {
-#if defined(OS_MACOSX) && ARCH_CPU_32_BITS
-  // The Mavericks malloc library changed in a way which breaks the tricks used
-  // to implement EnableTerminationOnOutOfMemory() with UncheckedMalloc() under
-  // 32-bit.  The 64-bit malloc library works as desired without tricks.
-  if (base::mac::IsOSMavericksOrLater())
-    return;
-#endif
   EXPECT_TRUE(base::UncheckedMalloc(kSafeMallocSize, &value_));
   EXPECT_TRUE(value_ != NULL);
   free(value_);
@@ -425,13 +418,6 @@ TEST_F(OutOfMemoryHandledTest, UncheckedMalloc) {
 }
 
 TEST_F(OutOfMemoryHandledTest, UncheckedCalloc) {
-#if defined(OS_MACOSX) && ARCH_CPU_32_BITS
-  // The Mavericks malloc library changed in a way which breaks the tricks used
-  // to implement EnableTerminationOnOutOfMemory() with UncheckedCalloc() under
-  // 32-bit.  The 64-bit malloc library works as desired without tricks.
-  if (base::mac::IsOSMavericksOrLater())
-    return;
-#endif
   EXPECT_TRUE(base::UncheckedCalloc(1, kSafeMallocSize, &value_));
   EXPECT_TRUE(value_ != NULL);
   const char* bytes = static_cast<const char*>(value_);

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/task_scheduler/scheduler_thread_pool_impl.h"
+#include "base/task_scheduler/scheduler_worker_pool_impl.h"
 
 #include <stddef.h>
 
@@ -27,43 +27,43 @@ namespace internal {
 
 namespace {
 
-// SchedulerThreadPool that owns the current thread, if any.
-LazyInstance<ThreadLocalPointer<const SchedulerThreadPool>>::Leaky
-    tls_current_thread_pool = LAZY_INSTANCE_INITIALIZER;
+// SchedulerWorker that owns the current thread, if any.
+LazyInstance<ThreadLocalPointer<const SchedulerWorker>>::Leaky
+    tls_current_worker = LAZY_INSTANCE_INITIALIZER;
 
-// SchedulerWorkerThread that owns the current thread, if any.
-LazyInstance<ThreadLocalPointer<const SchedulerWorkerThread>>::Leaky
-    tls_current_worker_thread = LAZY_INSTANCE_INITIALIZER;
+// SchedulerWorkerPool that owns the current thread, if any.
+LazyInstance<ThreadLocalPointer<const SchedulerWorkerPool>>::Leaky
+    tls_current_worker_pool = LAZY_INSTANCE_INITIALIZER;
 
 // A task runner that runs tasks with the PARALLEL ExecutionMode.
 class SchedulerParallelTaskRunner : public TaskRunner {
  public:
   // Constructs a SchedulerParallelTaskRunner which can be used to post tasks so
-  // long as |thread_pool| is alive.
-  // TODO(robliao): Find a concrete way to manage |thread_pool|'s memory.
+  // long as |worker_pool| is alive.
+  // TODO(robliao): Find a concrete way to manage |worker_pool|'s memory.
   SchedulerParallelTaskRunner(const TaskTraits& traits,
-                              SchedulerThreadPool* thread_pool)
-      : traits_(traits), thread_pool_(thread_pool) {}
+                              SchedulerWorkerPool* worker_pool)
+      : traits_(traits), worker_pool_(worker_pool) {}
 
   // TaskRunner:
   bool PostDelayedTask(const tracked_objects::Location& from_here,
                        const Closure& closure,
                        TimeDelta delay) override {
     // Post the task as part of a one-off single-task Sequence.
-    return thread_pool_->PostTaskWithSequence(
+    return worker_pool_->PostTaskWithSequence(
         WrapUnique(new Task(from_here, closure, traits_, delay)),
         make_scoped_refptr(new Sequence), nullptr);
   }
 
   bool RunsTasksOnCurrentThread() const override {
-    return tls_current_thread_pool.Get().Get() == thread_pool_;
+    return tls_current_worker_pool.Get().Get() == worker_pool_;
   }
 
  private:
   ~SchedulerParallelTaskRunner() override = default;
 
   const TaskTraits traits_;
-  SchedulerThreadPool* const thread_pool_;
+  SchedulerWorkerPool* const worker_pool_;
 
   DISALLOW_COPY_AND_ASSIGN(SchedulerParallelTaskRunner);
 };
@@ -72,11 +72,11 @@ class SchedulerParallelTaskRunner : public TaskRunner {
 class SchedulerSequencedTaskRunner : public SequencedTaskRunner {
  public:
   // Constructs a SchedulerSequencedTaskRunner which can be used to post tasks
-  // so long as |thread_pool| is alive.
-  // TODO(robliao): Find a concrete way to manage |thread_pool|'s memory.
+  // so long as |worker_pool| is alive.
+  // TODO(robliao): Find a concrete way to manage |worker_pool|'s memory.
   SchedulerSequencedTaskRunner(const TaskTraits& traits,
-                               SchedulerThreadPool* thread_pool)
-      : traits_(traits), thread_pool_(thread_pool) {}
+                               SchedulerWorkerPool* worker_pool)
+      : traits_(traits), worker_pool_(worker_pool) {}
 
   // SequencedTaskRunner:
   bool PostDelayedTask(const tracked_objects::Location& from_here,
@@ -86,7 +86,7 @@ class SchedulerSequencedTaskRunner : public SequencedTaskRunner {
     task->sequenced_task_runner_ref = this;
 
     // Post the task as part of |sequence_|.
-    return thread_pool_->PostTaskWithSequence(std::move(task), sequence_,
+    return worker_pool_->PostTaskWithSequence(std::move(task), sequence_,
                                               nullptr);
   }
 
@@ -98,7 +98,7 @@ class SchedulerSequencedTaskRunner : public SequencedTaskRunner {
   }
 
   bool RunsTasksOnCurrentThread() const override {
-    return tls_current_thread_pool.Get().Get() == thread_pool_;
+    return tls_current_worker_pool.Get().Get() == worker_pool_;
   }
 
  private:
@@ -108,7 +108,7 @@ class SchedulerSequencedTaskRunner : public SequencedTaskRunner {
   const scoped_refptr<Sequence> sequence_ = new Sequence;
 
   const TaskTraits traits_;
-  SchedulerThreadPool* const thread_pool_;
+  SchedulerWorkerPool* const worker_pool_;
 
   DISALLOW_COPY_AND_ASSIGN(SchedulerSequencedTaskRunner);
 };
@@ -117,15 +117,15 @@ class SchedulerSequencedTaskRunner : public SequencedTaskRunner {
 class SchedulerSingleThreadTaskRunner : public SingleThreadTaskRunner {
  public:
   // Constructs a SchedulerSingleThreadTaskRunner which can be used to post
-  // tasks so long as |thread_pool| and |worker_thread| are alive.
-  // TODO(robliao): Find a concrete way to manage the memory of |thread_pool|
-  // and |worker_thread|.
+  // tasks so long as |worker_pool| and |worker| are alive.
+  // TODO(robliao): Find a concrete way to manage the memory of |worker_pool|
+  // and |worker|.
   SchedulerSingleThreadTaskRunner(const TaskTraits& traits,
-                                  SchedulerThreadPool* thread_pool,
-                                  SchedulerWorkerThread* worker_thread)
+                                  SchedulerWorkerPool* worker_pool,
+                                  SchedulerWorker* worker)
       : traits_(traits),
-        thread_pool_(thread_pool),
-        worker_thread_(worker_thread) {}
+        worker_pool_(worker_pool),
+        worker_(worker) {}
 
   // SingleThreadTaskRunner:
   bool PostDelayedTask(const tracked_objects::Location& from_here,
@@ -134,9 +134,9 @@ class SchedulerSingleThreadTaskRunner : public SingleThreadTaskRunner {
     std::unique_ptr<Task> task(new Task(from_here, closure, traits_, delay));
     task->single_thread_task_runner_ref = this;
 
-    // Post the task to be executed by |worker_thread_| as part of |sequence_|.
-    return thread_pool_->PostTaskWithSequence(std::move(task), sequence_,
-                                              worker_thread_);
+    // Post the task to be executed by |worker_| as part of |sequence_|.
+    return worker_pool_->PostTaskWithSequence(std::move(task), sequence_,
+                                              worker_);
   }
 
   bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
@@ -147,7 +147,7 @@ class SchedulerSingleThreadTaskRunner : public SingleThreadTaskRunner {
   }
 
   bool RunsTasksOnCurrentThread() const override {
-    return tls_current_worker_thread.Get().Get() == worker_thread_;
+    return tls_current_worker.Get().Get() == worker_;
   }
 
  private:
@@ -157,58 +157,57 @@ class SchedulerSingleThreadTaskRunner : public SingleThreadTaskRunner {
   const scoped_refptr<Sequence> sequence_ = new Sequence;
 
   const TaskTraits traits_;
-  SchedulerThreadPool* const thread_pool_;
-  SchedulerWorkerThread* const worker_thread_;
+  SchedulerWorkerPool* const worker_pool_;
+  SchedulerWorker* const worker_;
 
   DISALLOW_COPY_AND_ASSIGN(SchedulerSingleThreadTaskRunner);
 };
 
 // Only used in DCHECKs.
-bool ContainsWorkerThread(
-    const std::vector<std::unique_ptr<SchedulerWorkerThread>>& worker_threads,
-    const SchedulerWorkerThread* worker_thread) {
-  auto it = std::find_if(
-      worker_threads.begin(), worker_threads.end(),
-      [worker_thread](const std::unique_ptr<SchedulerWorkerThread>& i) {
-        return i.get() == worker_thread;
+bool ContainsWorker(
+    const std::vector<std::unique_ptr<SchedulerWorker>>& workers,
+    const SchedulerWorker* worker) {
+  auto it = std::find_if(workers.begin(), workers.end(),
+      [worker](const std::unique_ptr<SchedulerWorker>& i) {
+        return i.get() == worker;
       });
-  return it != worker_threads.end();
+  return it != workers.end();
 }
 
 }  // namespace
 
-class SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl
-    : public SchedulerWorkerThread::Delegate {
+class SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl
+    : public SchedulerWorker::Delegate {
  public:
-  // |outer| owns the worker thread for which this delegate is constructed.
+  // |outer| owns the worker for which this delegate is constructed.
   // |re_enqueue_sequence_callback| is invoked when ReEnqueueSequence() is
   // called with a non-single-threaded Sequence. |shared_priority_queue| is a
-  // PriorityQueue whose transactions may overlap with the worker thread's
+  // PriorityQueue whose transactions may overlap with the worker's
   // single-threaded PriorityQueue's transactions. |index| will be appended to
-  // this thread's name to uniquely identify it.
-  SchedulerWorkerThreadDelegateImpl(
-      SchedulerThreadPoolImpl* outer,
+  // the pool name to label the underlying worker threads.
+  SchedulerWorkerDelegateImpl(
+      SchedulerWorkerPoolImpl* outer,
       const ReEnqueueSequenceCallback& re_enqueue_sequence_callback,
       const PriorityQueue* shared_priority_queue,
       int index);
-  ~SchedulerWorkerThreadDelegateImpl() override;
+  ~SchedulerWorkerDelegateImpl() override;
 
   PriorityQueue* single_threaded_priority_queue() {
     return &single_threaded_priority_queue_;
   }
 
-  // SchedulerWorkerThread::Delegate:
-  void OnMainEntry(SchedulerWorkerThread* worker_thread) override;
-  scoped_refptr<Sequence> GetWork(
-      SchedulerWorkerThread* worker_thread) override;
+  // SchedulerWorker::Delegate:
+  void OnMainEntry(SchedulerWorker* worker) override;
+  scoped_refptr<Sequence> GetWork(SchedulerWorker* worker) override;
   void ReEnqueueSequence(scoped_refptr<Sequence> sequence) override;
   TimeDelta GetSleepTimeout() override;
+  bool CanDetach(SchedulerWorker* worker) override;
 
  private:
-  SchedulerThreadPoolImpl* outer_;
+  SchedulerWorkerPoolImpl* outer_;
   const ReEnqueueSequenceCallback re_enqueue_sequence_callback_;
 
-  // Single-threaded PriorityQueue for the worker thread.
+  // Single-threaded PriorityQueue for the worker.
   PriorityQueue single_threaded_priority_queue_;
 
   // True if the last Sequence returned by GetWork() was extracted from
@@ -217,17 +216,17 @@ class SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl
 
   const int index_;
 
-  DISALLOW_COPY_AND_ASSIGN(SchedulerWorkerThreadDelegateImpl);
+  DISALLOW_COPY_AND_ASSIGN(SchedulerWorkerDelegateImpl);
 };
 
-SchedulerThreadPoolImpl::~SchedulerThreadPoolImpl() {
-  // SchedulerThreadPool should never be deleted in production unless its
+SchedulerWorkerPoolImpl::~SchedulerWorkerPoolImpl() {
+  // SchedulerWorkerPool should never be deleted in production unless its
   // initialization failed.
-  DCHECK(join_for_testing_returned_.IsSignaled() || worker_threads_.empty());
+  DCHECK(join_for_testing_returned_.IsSignaled() || workers_.empty());
 }
 
 // static
-std::unique_ptr<SchedulerThreadPoolImpl> SchedulerThreadPoolImpl::Create(
+std::unique_ptr<SchedulerWorkerPoolImpl> SchedulerWorkerPoolImpl::Create(
     StringPiece name,
     ThreadPriority thread_priority,
     size_t max_threads,
@@ -235,31 +234,31 @@ std::unique_ptr<SchedulerThreadPoolImpl> SchedulerThreadPoolImpl::Create(
     const ReEnqueueSequenceCallback& re_enqueue_sequence_callback,
     TaskTracker* task_tracker,
     DelayedTaskManager* delayed_task_manager) {
-  std::unique_ptr<SchedulerThreadPoolImpl> thread_pool(
-      new SchedulerThreadPoolImpl(name, io_restriction, task_tracker,
+  std::unique_ptr<SchedulerWorkerPoolImpl> worker_pool(
+      new SchedulerWorkerPoolImpl(name, io_restriction, task_tracker,
                                   delayed_task_manager));
-  if (thread_pool->Initialize(thread_priority, max_threads,
+  if (worker_pool->Initialize(thread_priority, max_threads,
                               re_enqueue_sequence_callback)) {
-    return thread_pool;
+    return worker_pool;
   }
   return nullptr;
 }
 
-void SchedulerThreadPoolImpl::WaitForAllWorkerThreadsIdleForTesting() {
-  AutoSchedulerLock auto_lock(idle_worker_threads_stack_lock_);
-  while (idle_worker_threads_stack_.Size() < worker_threads_.size())
-    idle_worker_threads_stack_cv_for_testing_->Wait();
+void SchedulerWorkerPoolImpl::WaitForAllWorkersIdleForTesting() {
+  AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
+  while (idle_workers_stack_.Size() < workers_.size())
+    idle_workers_stack_cv_for_testing_->Wait();
 }
 
-void SchedulerThreadPoolImpl::JoinForTesting() {
-  for (const auto& worker_thread : worker_threads_)
-    worker_thread->JoinForTesting();
+void SchedulerWorkerPoolImpl::JoinForTesting() {
+  for (const auto& worker : workers_)
+    worker->JoinForTesting();
 
   DCHECK(!join_for_testing_returned_.IsSignaled());
   join_for_testing_returned_.Signal();
 }
 
-scoped_refptr<TaskRunner> SchedulerThreadPoolImpl::CreateTaskRunnerWithTraits(
+scoped_refptr<TaskRunner> SchedulerWorkerPoolImpl::CreateTaskRunnerWithTraits(
     const TaskTraits& traits,
     ExecutionMode execution_mode) {
   switch (execution_mode) {
@@ -271,18 +270,17 @@ scoped_refptr<TaskRunner> SchedulerThreadPoolImpl::CreateTaskRunnerWithTraits(
 
     case ExecutionMode::SINGLE_THREADED: {
       // TODO(fdoray): Find a way to take load into account when assigning a
-      // SchedulerWorkerThread to a SingleThreadTaskRunner. Also, this code
-      // assumes that all SchedulerWorkerThreads are alive. Eventually, we might
+      // SchedulerWorker to a SingleThreadTaskRunner. Also, this code
+      // assumes that all SchedulerWorkers are alive. Eventually, we might
       // decide to tear down threads that haven't run tasks for a long time.
-      size_t worker_thread_index;
+      size_t worker_index;
       {
-        AutoSchedulerLock auto_lock(next_worker_thread_index_lock_);
-        worker_thread_index = next_worker_thread_index_;
-        next_worker_thread_index_ =
-            (next_worker_thread_index_ + 1) % worker_threads_.size();
+        AutoSchedulerLock auto_lock(next_worker_index_lock_);
+        worker_index = next_worker_index_;
+        next_worker_index_ = (next_worker_index_ + 1) % workers_.size();
       }
       return make_scoped_refptr(new SchedulerSingleThreadTaskRunner(
-          traits, this, worker_threads_[worker_thread_index].get()));
+          traits, this, workers_[worker_index].get()));
     }
   }
 
@@ -290,7 +288,7 @@ scoped_refptr<TaskRunner> SchedulerThreadPoolImpl::CreateTaskRunnerWithTraits(
   return nullptr;
 }
 
-void SchedulerThreadPoolImpl::ReEnqueueSequence(
+void SchedulerWorkerPoolImpl::ReEnqueueSequence(
     scoped_refptr<Sequence> sequence,
     const SequenceSortKey& sequence_sort_key) {
   shared_priority_queue_.BeginTransaction()->Push(std::move(sequence),
@@ -300,56 +298,52 @@ void SchedulerThreadPoolImpl::ReEnqueueSequence(
   // soon try to get another Sequence from which to run a Task. If the thread
   // belongs to this pool, it will get that Sequence from
   // |shared_priority_queue_|. When that's the case, there is no need to wake up
-  // another thread after |sequence| is inserted in |shared_priority_queue_|. If
-  // we did wake up another thread, we would waste resources by having more
-  // threads trying to get a Sequence from |shared_priority_queue_| than the
+  // another worker after |sequence| is inserted in |shared_priority_queue_|. If
+  // we did wake up another worker, we would waste resources by having more
+  // workers trying to get a Sequence from |shared_priority_queue_| than the
   // number of Sequences in it.
-  if (tls_current_thread_pool.Get().Get() != this)
-    WakeUpOneThread();
+  if (tls_current_worker_pool.Get().Get() != this)
+    WakeUpOneWorker();
 }
 
-bool SchedulerThreadPoolImpl::PostTaskWithSequence(
+bool SchedulerWorkerPoolImpl::PostTaskWithSequence(
     std::unique_ptr<Task> task,
     scoped_refptr<Sequence> sequence,
-    SchedulerWorkerThread* worker_thread) {
+    SchedulerWorker* worker) {
   DCHECK(task);
   DCHECK(sequence);
-  DCHECK(!worker_thread ||
-         ContainsWorkerThread(worker_threads_, worker_thread));
+  DCHECK(!worker || ContainsWorker(workers_, worker));
 
   if (!task_tracker_->WillPostTask(task.get()))
     return false;
 
   if (task->delayed_run_time.is_null()) {
-    PostTaskWithSequenceNow(std::move(task), std::move(sequence),
-                            worker_thread);
+    PostTaskWithSequenceNow(std::move(task), std::move(sequence), worker);
   } else {
     delayed_task_manager_->AddDelayedTask(std::move(task), std::move(sequence),
-                                          worker_thread, this);
+                                          worker, this);
   }
 
   return true;
 }
 
-void SchedulerThreadPoolImpl::PostTaskWithSequenceNow(
+void SchedulerWorkerPoolImpl::PostTaskWithSequenceNow(
     std::unique_ptr<Task> task,
     scoped_refptr<Sequence> sequence,
-    SchedulerWorkerThread* worker_thread) {
+    SchedulerWorker* worker) {
   DCHECK(task);
   DCHECK(sequence);
-  DCHECK(!worker_thread ||
-         ContainsWorkerThread(worker_threads_, worker_thread));
+  DCHECK(!worker || ContainsWorker(workers_, worker));
 
   // Confirm that |task| is ready to run (its delayed run time is either null or
   // in the past).
   DCHECK_LE(task->delayed_run_time, delayed_task_manager_->Now());
 
-  // Because |worker_thread| belongs to this thread pool, we know that the type
-  // of its delegate is SchedulerWorkerThreadDelegateImpl.
+  // Because |worker| belongs to this worker pool, we know that the type
+  // of its delegate is SchedulerWorkerDelegateImpl.
   PriorityQueue* const priority_queue =
-      worker_thread
-          ? static_cast<SchedulerWorkerThreadDelegateImpl*>(
-                worker_thread->delegate())
+      worker
+          ? static_cast<SchedulerWorkerDelegateImpl*>(worker->delegate())
                 ->single_threaded_priority_queue()
           : &shared_priority_queue_;
   DCHECK(priority_queue);
@@ -360,23 +354,23 @@ void SchedulerThreadPoolImpl::PostTaskWithSequenceNow(
     // inserted into it. Otherwise, one of these must be true:
     // - |sequence| is already in a PriorityQueue (not necessarily
     //   |shared_priority_queue_|), or,
-    // - A worker thread is running a Task from |sequence|. It will insert
-    //   |sequence| in a PriorityQueue once it's done running the Task.
+    // - A worker is running a Task from |sequence|. It will insert |sequence|
+    //   in a PriorityQueue once it's done running the Task.
     const auto sequence_sort_key = sequence->GetSortKey();
     priority_queue->BeginTransaction()->Push(std::move(sequence),
                                              sequence_sort_key);
 
-    // Wake up a worker thread to process |sequence|.
-    if (worker_thread)
-      worker_thread->WakeUp();
+    // Wake up a worker to process |sequence|.
+    if (worker)
+      worker->WakeUp();
     else
-      WakeUpOneThread();
+      WakeUpOneWorker();
   }
 }
 
-SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::
-    SchedulerWorkerThreadDelegateImpl(
-        SchedulerThreadPoolImpl* outer,
+SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
+    SchedulerWorkerDelegateImpl(
+        SchedulerWorkerPoolImpl* outer,
         const ReEnqueueSequenceCallback& re_enqueue_sequence_callback,
         const PriorityQueue* shared_priority_queue,
         int index)
@@ -385,34 +379,34 @@ SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::
       single_threaded_priority_queue_(shared_priority_queue),
       index_(index) {}
 
-SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::
-    ~SchedulerWorkerThreadDelegateImpl() = default;
+SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
+    ~SchedulerWorkerDelegateImpl() = default;
 
-void SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::OnMainEntry(
-    SchedulerWorkerThread* worker_thread) {
+void SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::OnMainEntry(
+    SchedulerWorker* worker) {
 #if DCHECK_IS_ON()
-  // Wait for |outer_->threads_created_| to avoid traversing
-  // |outer_->worker_threads_| while it is being filled by Initialize().
-  outer_->threads_created_.Wait();
-  DCHECK(ContainsWorkerThread(outer_->worker_threads_, worker_thread));
+  // Wait for |outer_->workers_created_| to avoid traversing
+  // |outer_->workers_| while it is being filled by Initialize().
+  outer_->workers_created_.Wait();
+  DCHECK(ContainsWorker(outer_->workers_, worker));
 #endif
 
   PlatformThread::SetName(
       StringPrintf("%sWorker%d", outer_->name_.c_str(), index_));
 
-  DCHECK(!tls_current_worker_thread.Get().Get());
-  DCHECK(!tls_current_thread_pool.Get().Get());
-  tls_current_worker_thread.Get().Set(worker_thread);
-  tls_current_thread_pool.Get().Set(outer_);
+  DCHECK(!tls_current_worker.Get().Get());
+  DCHECK(!tls_current_worker_pool.Get().Get());
+  tls_current_worker.Get().Set(worker);
+  tls_current_worker_pool.Get().Set(outer_);
 
   ThreadRestrictions::SetIOAllowed(outer_->io_restriction_ ==
                                    IORestriction::ALLOWED);
 }
 
 scoped_refptr<Sequence>
-SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::GetWork(
-    SchedulerWorkerThread* worker_thread) {
-  DCHECK(ContainsWorkerThread(outer_->worker_threads_, worker_thread));
+SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::GetWork(
+    SchedulerWorker* worker) {
+  DCHECK(ContainsWorker(outer_->workers_, worker));
 
   scoped_refptr<Sequence> sequence;
   {
@@ -425,19 +419,19 @@ SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::GetWork(
         single_threaded_transaction->IsEmpty()) {
       single_threaded_transaction.reset();
 
-      // |shared_transaction| is kept alive while |worker_thread| is added to
-      // |idle_worker_threads_stack_| to avoid this race:
+      // |shared_transaction| is kept alive while |worker| is added to
+      // |idle_workers_stack_| to avoid this race:
       // 1. This thread creates a Transaction, finds |shared_priority_queue_|
       //    empty and ends the Transaction.
       // 2. Other thread creates a Transaction, inserts a Sequence into
       //    |shared_priority_queue_| and ends the Transaction. This can't happen
       //    if the Transaction of step 1 is still active because because there
       //    can only be one active Transaction per PriorityQueue at a time.
-      // 3. Other thread calls WakeUpOneThread(). No thread is woken up because
-      //    |idle_worker_threads_stack_| is empty.
-      // 4. This thread adds itself to |idle_worker_threads_stack_| and goes to
-      //    sleep. No thread runs the Sequence inserted in step 2.
-      outer_->AddToIdleWorkerThreadsStack(worker_thread);
+      // 3. Other thread calls WakeUpOneWorker(). No thread is woken up because
+      //    |idle_workers_stack_| is empty.
+      // 4. This thread adds itself to |idle_workers_stack_| and goes to sleep.
+      //    No thread runs the Sequence inserted in step 2.
+      outer_->AddToIdleWorkersStack(worker);
       return nullptr;
     }
 
@@ -461,11 +455,11 @@ SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::GetWork(
   }
   DCHECK(sequence);
 
-  outer_->RemoveFromIdleWorkerThreadsStack(worker_thread);
+  outer_->RemoveFromIdleWorkersStack(worker);
   return sequence;
 }
 
-void SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::
+void SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
     ReEnqueueSequence(scoped_refptr<Sequence> sequence) {
   if (last_sequence_is_single_threaded_) {
     // A single-threaded Sequence is always re-enqueued in the single-threaded
@@ -480,25 +474,30 @@ void SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::
   }
 }
 
-TimeDelta SchedulerThreadPoolImpl::SchedulerWorkerThreadDelegateImpl::
+TimeDelta SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
     GetSleepTimeout() {
   return TimeDelta::Max();
 }
 
-SchedulerThreadPoolImpl::SchedulerThreadPoolImpl(
+bool SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::CanDetach(
+    SchedulerWorker* worker) {
+  return false;
+}
+
+SchedulerWorkerPoolImpl::SchedulerWorkerPoolImpl(
     StringPiece name,
     IORestriction io_restriction,
     TaskTracker* task_tracker,
     DelayedTaskManager* delayed_task_manager)
     : name_(name.as_string()),
       io_restriction_(io_restriction),
-      idle_worker_threads_stack_lock_(shared_priority_queue_.container_lock()),
-      idle_worker_threads_stack_cv_for_testing_(
-          idle_worker_threads_stack_lock_.CreateConditionVariable()),
+      idle_workers_stack_lock_(shared_priority_queue_.container_lock()),
+      idle_workers_stack_cv_for_testing_(
+          idle_workers_stack_lock_.CreateConditionVariable()),
       join_for_testing_returned_(WaitableEvent::ResetPolicy::MANUAL,
                                  WaitableEvent::InitialState::NOT_SIGNALED),
 #if DCHECK_IS_ON()
-      threads_created_(WaitableEvent::ResetPolicy::MANUAL,
+      workers_created_(WaitableEvent::ResetPolicy::MANUAL,
                        WaitableEvent::InitialState::NOT_SIGNALED),
 #endif
       task_tracker_(task_tracker),
@@ -507,58 +506,59 @@ SchedulerThreadPoolImpl::SchedulerThreadPoolImpl(
   DCHECK(delayed_task_manager_);
 }
 
-bool SchedulerThreadPoolImpl::Initialize(
+bool SchedulerWorkerPoolImpl::Initialize(
     ThreadPriority thread_priority,
     size_t max_threads,
     const ReEnqueueSequenceCallback& re_enqueue_sequence_callback) {
-  AutoSchedulerLock auto_lock(idle_worker_threads_stack_lock_);
+  AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
 
-  DCHECK(worker_threads_.empty());
+  DCHECK(workers_.empty());
 
   for (size_t i = 0; i < max_threads; ++i) {
-    std::unique_ptr<SchedulerWorkerThread> worker_thread =
-        SchedulerWorkerThread::Create(
-            thread_priority, WrapUnique(new SchedulerWorkerThreadDelegateImpl(
+    std::unique_ptr<SchedulerWorker> worker =
+        SchedulerWorker::Create(
+            thread_priority, WrapUnique(new SchedulerWorkerDelegateImpl(
                                  this, re_enqueue_sequence_callback,
                                  &shared_priority_queue_, static_cast<int>(i))),
-            task_tracker_);
-    if (!worker_thread)
+            task_tracker_,
+            SchedulerWorker::InitialState::ALIVE);
+    if (!worker)
       break;
-    idle_worker_threads_stack_.Push(worker_thread.get());
-    worker_threads_.push_back(std::move(worker_thread));
+    idle_workers_stack_.Push(worker.get());
+    workers_.push_back(std::move(worker));
   }
 
 #if DCHECK_IS_ON()
-  threads_created_.Signal();
+  workers_created_.Signal();
 #endif
 
-  return !worker_threads_.empty();
+  return !workers_.empty();
 }
 
-void SchedulerThreadPoolImpl::WakeUpOneThread() {
-  SchedulerWorkerThread* worker_thread;
+void SchedulerWorkerPoolImpl::WakeUpOneWorker() {
+  SchedulerWorker* worker;
   {
-    AutoSchedulerLock auto_lock(idle_worker_threads_stack_lock_);
-    worker_thread = idle_worker_threads_stack_.Pop();
+    AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
+    worker = idle_workers_stack_.Pop();
   }
-  if (worker_thread)
-    worker_thread->WakeUp();
+  if (worker)
+    worker->WakeUp();
 }
 
-void SchedulerThreadPoolImpl::AddToIdleWorkerThreadsStack(
-    SchedulerWorkerThread* worker_thread) {
-  AutoSchedulerLock auto_lock(idle_worker_threads_stack_lock_);
-  idle_worker_threads_stack_.Push(worker_thread);
-  DCHECK_LE(idle_worker_threads_stack_.Size(), worker_threads_.size());
+void SchedulerWorkerPoolImpl::AddToIdleWorkersStack(
+    SchedulerWorker* worker) {
+  AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
+  idle_workers_stack_.Push(worker);
+  DCHECK_LE(idle_workers_stack_.Size(), workers_.size());
 
-  if (idle_worker_threads_stack_.Size() == worker_threads_.size())
-    idle_worker_threads_stack_cv_for_testing_->Broadcast();
+  if (idle_workers_stack_.Size() == workers_.size())
+    idle_workers_stack_cv_for_testing_->Broadcast();
 }
 
-void SchedulerThreadPoolImpl::RemoveFromIdleWorkerThreadsStack(
-    SchedulerWorkerThread* worker_thread) {
-  AutoSchedulerLock auto_lock(idle_worker_threads_stack_lock_);
-  idle_worker_threads_stack_.Remove(worker_thread);
+void SchedulerWorkerPoolImpl::RemoveFromIdleWorkersStack(
+    SchedulerWorker* worker) {
+  AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
+  idle_workers_stack_.Remove(worker);
 }
 
 }  // namespace internal

@@ -65,6 +65,9 @@ class BASE_EXPORT Value {
 
   static std::unique_ptr<Value> CreateNullValue();
 
+  // Returns the name for a given |type|.
+  static const char* GetTypeName(Type type);
+
   // Returns the type of the value stored by the current Value object.
   // Each type will be implemented by only one subclass of Value, so it's
   // safe to use the Type to determine whether you can cast from
@@ -182,7 +185,8 @@ class BASE_EXPORT BinaryValue: public Value {
   // For situations where you want to keep ownership of your buffer, this
   // factory method creates a new BinaryValue by copying the contents of the
   // buffer that's passed in.
-  static BinaryValue* CreateWithCopiedBuffer(const char* buffer, size_t size);
+  static std::unique_ptr<BinaryValue> CreateWithCopiedBuffer(const char* buffer,
+                                                             size_t size);
 
   size_t GetSize() const { return size_; }
 

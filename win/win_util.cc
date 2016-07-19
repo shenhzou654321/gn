@@ -14,6 +14,7 @@
 #include <psapi.h>
 #include <sddl.h>
 #include <setupapi.h>
+#include <shellscalingapi.h>
 #include <shlwapi.h>
 #include <signal.h>
 #include <stddef.h>
@@ -496,6 +497,31 @@ bool GetLoadedModulesSnapshot(HANDLE process, std::vector<HMODULE>* snapshot) {
 
   DLOG(ERROR) << "Failed to enumerate modules.";
   return false;
+}
+
+bool IsProcessPerMonitorDpiAware() {
+  enum class PerMonitorDpiAware {
+    UNKNOWN = 0,
+    PER_MONITOR_DPI_UNAWARE,
+    PER_MONITOR_DPI_AWARE,
+  };
+  static PerMonitorDpiAware per_monitor_dpi_aware = PerMonitorDpiAware::UNKNOWN;
+  if (per_monitor_dpi_aware == PerMonitorDpiAware::UNKNOWN) {
+    per_monitor_dpi_aware = PerMonitorDpiAware::PER_MONITOR_DPI_UNAWARE;
+    HMODULE shcore_dll = ::LoadLibrary(L"shcore.dll");
+    if (shcore_dll) {
+      auto get_process_dpi_awareness_func =
+          reinterpret_cast<decltype(::GetProcessDpiAwareness)*>(
+              ::GetProcAddress(shcore_dll, "GetProcessDpiAwareness"));
+      if (get_process_dpi_awareness_func) {
+        PROCESS_DPI_AWARENESS awareness;
+        if (SUCCEEDED(get_process_dpi_awareness_func(nullptr, &awareness)) &&
+            awareness == PROCESS_PER_MONITOR_DPI_AWARE)
+          per_monitor_dpi_aware = PerMonitorDpiAware::PER_MONITOR_DPI_AWARE;
+      }
+    }
+  }
+  return per_monitor_dpi_aware == PerMonitorDpiAware::PER_MONITOR_DPI_AWARE;
 }
 
 }  // namespace win

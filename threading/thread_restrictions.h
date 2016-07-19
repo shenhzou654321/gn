@@ -60,8 +60,9 @@ namespace mojo {
 namespace common {
 class MessagePumpMojo;
 }
+class SyncCallRestrictions;
 }
-namespace mus {
+namespace ui {
 class CommandBufferClientImpl;
 class CommandBufferLocal;
 class GpuState;
@@ -82,7 +83,6 @@ class WindowResizeHelperMac;
 }
 
 namespace views {
-class ClipboardMus;
 class ScreenMus;
 }
 
@@ -211,9 +211,10 @@ class BASE_EXPORT ThreadRestrictions {
   friend class PlatformThread;
   friend class android::JavaHandlerThread;
   friend class mojo::common::MessagePumpMojo;
-  friend class mus::CommandBufferClientImpl;
-  friend class mus::CommandBufferLocal;
-  friend class mus::GpuState;
+  friend class mojo::SyncCallRestrictions;
+  friend class ui::CommandBufferClientImpl;
+  friend class ui::CommandBufferLocal;
+  friend class ui::GpuState;
 
   // END ALLOWED USAGE.
   // BEGIN USAGE THAT NEEDS TO BE FIXED.
@@ -236,10 +237,6 @@ class BASE_EXPORT ThreadRestrictions {
 #if !defined(OFFICIAL_BUILD)
   friend class content::SoftwareOutputDeviceMus;  // Interim non-production code
 #endif
-  // In the non-mus case, we called blocking OS functions in the ui::Clipboard
-  // implementation which weren't caught by threading restrictions. Our
-  // blocking calls to mus, however, are.
-  friend class views::ClipboardMus;
   friend class views::ScreenMus;
 // END USAGE THAT NEEDS TO BE FIXED.
 

@@ -21,6 +21,11 @@ namespace base {
 
 namespace {
 
+const char* const kTypeNames[] = {"null",   "boolean", "integer",    "double",
+                                  "string", "binary",  "dictionary", "list"};
+static_assert(arraysize(kTypeNames) == Value::TYPE_LIST + 1,
+              "kTypeNames Has Wrong Size");
+
 std::unique_ptr<Value> CopyWithoutEmptyChildren(const Value& node);
 
 // Make a deep copy of |node|, but don't include empty lists or dictionaries
@@ -75,6 +80,13 @@ Value::~Value() {
 // static
 std::unique_ptr<Value> Value::CreateNullValue() {
   return WrapUnique(new Value(TYPE_NULL));
+}
+
+// static
+const char* Value::GetTypeName(Value::Type type) {
+  DCHECK_GE(type, 0);
+  DCHECK_LT(static_cast<size_t>(type), arraysize(kTypeNames));
+  return kTypeNames[type];
 }
 
 bool Value::GetAsBinary(const BinaryValue** out_value) const {
@@ -304,12 +316,12 @@ BinaryValue::~BinaryValue() {
 }
 
 // static
-BinaryValue* BinaryValue::CreateWithCopiedBuffer(const char* buffer,
-                                                 size_t size) {
-  char* buffer_copy = new char[size];
-  memcpy(buffer_copy, buffer, size);
-  std::unique_ptr<char[]> scoped_buffer_copy(buffer_copy);
-  return new BinaryValue(std::move(scoped_buffer_copy), size);
+std::unique_ptr<BinaryValue> BinaryValue::CreateWithCopiedBuffer(
+    const char* buffer,
+    size_t size) {
+  std::unique_ptr<char[]> buffer_copy(new char[size]);
+  memcpy(buffer_copy.get(), buffer, size);
+  return base::MakeUnique<BinaryValue>(std::move(buffer_copy), size);
 }
 
 bool BinaryValue::GetAsBinary(const BinaryValue** out_value) const {
@@ -319,7 +331,7 @@ bool BinaryValue::GetAsBinary(const BinaryValue** out_value) const {
 }
 
 BinaryValue* BinaryValue::DeepCopy() const {
-  return CreateWithCopiedBuffer(buffer_.get(), size_);
+  return CreateWithCopiedBuffer(buffer_.get(), size_).release();
 }
 
 bool BinaryValue::Equals(const Value* other) const {
