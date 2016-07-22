@@ -733,6 +733,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'kernel32.lib',
         'user32.lib',
         'shell32.lib',
+        'advapi32.lib',
         'ole32.lib',
         'winmm.lib',
         'ws2_32.lib',
