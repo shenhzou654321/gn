@@ -13,10 +13,14 @@
 #include "base/metrics/histogram_base.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task_scheduler/scheduler_lock.h"
+#include "base/task_scheduler/sequence.h"
 #include "base/task_scheduler/task.h"
 #include "base/task_scheduler/task_traits.h"
 
 namespace base {
+
+class SequenceToken;
+
 namespace internal {
 
 // All tasks go through the scheduler's TaskTracker when they are posted and
@@ -40,16 +44,25 @@ class BASE_EXPORT TaskTracker {
   // this operation is allowed (|task| should be posted if-and-only-if it is).
   bool WillPostTask(const Task* task);
 
-  // Runs |task| unless the current shutdown state prevents that. WillPostTask()
-  // must have allowed |task| to be posted.
-  void RunTask(const Task* task);
+  // Runs |task| unless the current shutdown state prevents that.
+  // |sequence_token| is the token identifying the sequence from which |task|
+  // was extracted. Returns true if |task| ran. WillPostTask() must have allowed
+  // |task| to be posted before this is called.
+  bool RunTask(const Task* task, const SequenceToken& sequence_token);
 
-  // Returns true if shutdown has completed.
+  // Returns true once shutdown has started (Shutdown() has been called but
+  // might not have returned). Note: sequential consistency with the thread
+  // calling Shutdown() (or SetHasShutdownStartedForTesting()) isn't guaranteed
+  // by this call.
+  bool HasShutdownStarted() const;
+
+  // Returns true if shutdown has completed (Shutdown() has returned).
   bool IsShutdownComplete() const;
 
-  // Returns true while shutdown is in progress (i.e. Shutdown() has been called
-  // but hasn't returned).
-  bool IsShuttingDownForTesting() const;
+  // Causes HasShutdownStarted() to return true. Unlike when Shutdown() returns,
+  // IsShutdownComplete() won't return true after this returns. Shutdown()
+  // cannot be called after this.
+  void SetHasShutdownStartedForTesting();
 
  private:
   class State;

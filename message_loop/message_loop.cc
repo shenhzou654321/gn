@@ -214,7 +214,7 @@ std::unique_ptr<MessagePump> MessageLoop::CreateMessagePumpForType(Type type) {
 // TODO(rvargas): Get rid of the OS guards.
 #if defined(USE_GLIB) && !defined(OS_NACL)
   typedef MessagePumpGlib MessagePumpForUI;
-#elif defined(OS_LINUX) && !defined(OS_NACL)
+#elif (defined(OS_LINUX) && !defined(OS_NACL)) || defined(OS_BSD)
   typedef MessagePumpLibevent MessagePumpForUI;
 #endif
 
@@ -276,6 +276,7 @@ void MessageLoop::RemoveNestingObserver(NestingObserver* observer) {
   nesting_observers_.RemoveObserver(observer);
 }
 
+#if !(defined(OS_MACOSX) && !defined(OS_IOS))
 void MessageLoop::PostTask(
     const tracked_objects::Location& from_here,
     const Closure& task) {
@@ -288,6 +289,7 @@ void MessageLoop::PostDelayedTask(
     TimeDelta delay) {
   task_runner_->PostDelayedTask(from_here, task, delay);
 }
+#endif  // !(defined(OS_MACOSX) && !defined(OS_IOS))
 
 void MessageLoop::Run() {
   DCHECK(pump_);
@@ -416,21 +418,13 @@ void MessageLoop::BindToCurrentThread() {
   unbound_task_runner_->BindToCurrentThread();
   unbound_task_runner_ = nullptr;
   SetThreadTaskRunnerHandle();
-  {
-    // Save the current thread's ID for potential use by other threads
-    // later from GetThreadName().
-    thread_id_ = PlatformThread::CurrentId();
-    subtle::MemoryBarrier();
-  }
+  thread_id_ = PlatformThread::CurrentId();
 }
 
 std::string MessageLoop::GetThreadName() const {
-  if (thread_id_ == kInvalidThreadId) {
-    // |thread_id_| may already have been initialized but this thread might not
-    // have received the update yet.
-    subtle::MemoryBarrier();
-    DCHECK_NE(kInvalidThreadId, thread_id_);
-  }
+  DCHECK_NE(kInvalidThreadId, thread_id_)
+      << "GetThreadName() must only be called after BindToCurrentThread()'s "
+      << "side-effects have been synchronized with this thread.";
   return ThreadIdNameManager::GetInstance()->GetName(thread_id_);
 }
 
@@ -688,6 +682,7 @@ bool MessageLoop::DoIdleWork() {
   return false;
 }
 
+#if !(defined(OS_MACOSX) && !defined(OS_IOS))
 void MessageLoop::DeleteSoonInternal(const tracked_objects::Location& from_here,
                                      void(*deleter)(const void*),
                                      const void* object) {
@@ -700,6 +695,7 @@ void MessageLoop::ReleaseSoonInternal(
     const void* object) {
   task_runner()->PostNonNestableTask(from_here, Bind(releaser, object));
 }
+#endif  // !(defined(OS_MACOSX) && !defined(OS_IOS))
 
 #if !defined(OS_NACL)
 //------------------------------------------------------------------------------
@@ -712,6 +708,18 @@ MessageLoopForUI::MessageLoopForUI(std::unique_ptr<MessagePump> pump)
 void MessageLoopForUI::Start() {
   // No Histogram support for UI message loop as it is managed by Java side
   static_cast<MessagePumpForUI*>(pump_.get())->Start(this);
+}
+
+void MessageLoopForUI::StartForTesting(
+    base::android::JavaMessageHandlerFactory* factory,
+    WaitableEvent* test_done_event) {
+  // No Histogram support for UI message loop as it is managed by Java side
+  static_cast<MessagePumpForUI*>(pump_.get())
+      ->StartForUnitTest(this, factory, test_done_event);
+}
+
+void MessageLoopForUI::Abort() {
+  static_cast<MessagePumpForUI*>(pump_.get())->Abort();
 }
 #endif
 

@@ -25,11 +25,19 @@ class ServiceThreadDelegate : public SchedulerWorker::Delegate {
       : delayed_task_manager_(delayed_task_manager) {}
 
   // SchedulerWorker::Delegate:
-  void OnMainEntry(SchedulerWorker* worker) override {}
+  void OnMainEntry(SchedulerWorker* worker,
+                   const TimeDelta& detach_duration) override {
+    DCHECK(detach_duration.is_max());
+  }
 
   scoped_refptr<Sequence> GetWork(SchedulerWorker* worker) override {
     delayed_task_manager_->PostReadyTasks();
     return nullptr;
+  }
+
+  void DidRunTask(const Task* task, const TimeDelta& task_latency) override {
+    NOTREACHED()
+        << "GetWork() never returns a sequence so no task should ever run.";
   }
 
   void ReEnqueueSequence(scoped_refptr<Sequence> sequence) override {
