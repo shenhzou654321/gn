@@ -82,11 +82,11 @@ bool FilterTargets(const BuildSettings* build_settings,
 }
 
 std::string RenderJSON(const BuildSettings* build_settings,
-                       const Builder* builder,
+                       const Builder& builder,
                        std::vector<const Target*>& all_targets) {
   Label default_toolchain_label;
 
-  auto targets = base::WrapUnique(new base::DictionaryValue());
+  auto targets = base::MakeUnique<base::DictionaryValue>();
   for (const auto* target : all_targets) {
     if (default_toolchain_label.is_null())
       default_toolchain_label = target->settings()->default_toolchain_label();
@@ -104,13 +104,13 @@ std::string RenderJSON(const BuildSettings* build_settings,
                  std::move(description));
   }
 
-  auto settings = base::WrapUnique(new base::DictionaryValue());
+  auto settings = base::MakeUnique<base::DictionaryValue>();
   settings->SetString("root_path", build_settings->root_path_utf8());
   settings->SetString("build_dir", build_settings->build_dir().value());
   settings->SetString("default_toolchain",
                       default_toolchain_label.GetUserVisibleName(false));
 
-  auto output = base::WrapUnique(new base::DictionaryValue());
+  auto output = base::MakeUnique<base::DictionaryValue>();
   output->Set("targets", std::move(targets));
   output->Set("build_settings", std::move(settings));
 
@@ -167,7 +167,7 @@ bool InvokePython(const BuildSettings* build_settings,
 
 bool JSONProjectWriter::RunAndWriteFiles(
     const BuildSettings* build_settings,
-    const Builder* builder,
+    const Builder& builder,
     const std::string& file_name,
     const std::string& exec_script,
     const std::string& exec_script_extra_args,
@@ -182,7 +182,7 @@ bool JSONProjectWriter::RunAndWriteFiles(
 
   base::FilePath output_path = build_settings->GetFullPath(output_file);
 
-  std::vector<const Target*> all_targets = builder->GetAllResolvedTargets();
+  std::vector<const Target*> all_targets = builder.GetAllResolvedTargets();
   std::vector<const Target*> targets;
   if (!FilterTargets(build_settings, all_targets, &targets, dir_filter_string,
                      err)) {
