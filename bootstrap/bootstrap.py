@@ -492,7 +492,6 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/trace_event/heap_profiler_heap_dump_writer.cc',
       'base/trace_event/heap_profiler_stack_frame_deduplicator.cc',
       'base/trace_event/heap_profiler_type_name_deduplicator.cc',
-      'base/trace_event/malloc_dump_provider.cc',
       'base/trace_event/memory_allocator_dump.cc',
       'base/trace_event/memory_allocator_dump_guid.cc',
       'base/trace_event/memory_dump_manager.cc',
@@ -621,6 +620,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/strings/sys_string_conversions_posix.cc',
         'base/sys_info_linux.cc',
         'base/threading/platform_thread_linux.cc',
+        'base/trace_event/malloc_dump_provider.cc',
     ])
     static_libraries['libevent']['include_dirs'].extend([
         os.path.join(SRC_ROOT, 'base', 'third_party', 'libevent', 'linux')
@@ -655,6 +655,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/strings/sys_string_conversions_mac.mm',
         'base/time/time_mac.cc',
         'base/threading/platform_thread_mac.mm',
+        'base/trace_event/malloc_dump_provider.cc',
     ])
     static_libraries['libevent']['include_dirs'].extend([
         os.path.join(SRC_ROOT, 'base', 'third_party', 'libevent', 'mac')
@@ -719,6 +720,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/time/time_win.cc',
         'base/timer/hi_res_timer_manager_win.cc',
         'base/trace_event/heap_profiler_allocation_register_win.cc',
+        'base/trace_event/malloc_dump_provider.cc',
         'base/trace_event/trace_event_etw_export_win.cc',
         'base/win/enum_variant.cc',
         'base/win/event_trace_controller.cc',
