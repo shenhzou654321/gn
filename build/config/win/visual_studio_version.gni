@@ -15,9 +15,6 @@ declare_args() {
   # installation location.
   windows_sdk_path = ""
 
-  # Denotes whether to use /DEBUG:FASTLINK
-  is_win_fastlink = false
-
   # Path of the Windows Clang installation
   win_clang_prefix = ""
 }
@@ -39,6 +36,13 @@ if (is_clang) {
          "You must set win_clang_prefix when using Clang on Windows")
 }
 
+if (is_clang) {
+  sys_include_prefix = "-imsvc"
+} else {
+  # MSVC doesn't have the concept of system headers.
+  sys_include_prefix = "/I"
+}
+
 if (host_os == "win") {
   clang_cl = "clang-cl.exe"
 } else {
@@ -49,6 +53,7 @@ toolchain_data = exec_script("toolchain.py",
                              [
                                "setup_toolchain",
                                visual_studio_path,
+                               sys_include_prefix,
                              ],
                              "scope")
 

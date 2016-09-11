@@ -34,9 +34,11 @@ gcc_toolchain("clang_x86") {
   ar = ar
   nm = nm
 
-  toolchain_cpu = "x86"
-  toolchain_os = target_os
-  is_clang = true
+  toolchain_args = {
+    current_cpu = "x86"
+    current_os = target_os
+    is_clang = true
+  }
 }
 
 gcc_toolchain("x86") {
@@ -48,9 +50,11 @@ gcc_toolchain("x86") {
   ar = ar
   nm = nm
 
-  toolchain_cpu = "x86"
-  toolchain_os = target_os
-  is_clang = false
+  toolchain_args = {
+    current_cpu = "x86"
+    current_os = target_os
+    is_clang = false
+  }
 }
 
 gcc_toolchain("clang_x64") {
@@ -62,9 +66,11 @@ gcc_toolchain("clang_x64") {
   ar = ar
   nm = nm
 
-  toolchain_cpu = "x64"
-  toolchain_os = target_os
-  is_clang = true
+  toolchain_args = {
+    current_cpu = "x64"
+    current_os = target_os
+    is_clang = true
+  }
 }
 
 gcc_toolchain("x64") {
@@ -76,7 +82,9 @@ gcc_toolchain("x64") {
   ar = ar
   nm = nm
 
-  toolchain_cpu = "x64"
-  toolchain_os = target_os
-  is_clang = false
+  toolchain_args = {
+    current_cpu = "x64"
+    current_os = target_os
+    is_clang = false
+  }
 }

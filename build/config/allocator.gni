@@ -13,5 +13,12 @@ declare_args() {
 assert(use_allocator == "none" || use_allocator == "tcmalloc")
 
 assert(!is_win || use_allocator == "none", "Tcmalloc doesn't work on Windows.")
-assert(!use_experimental_allocator_shim || is_linux,
-       "use_experimental_allocator_shim supported only on Linux")
+
+assert(
+    !use_experimental_allocator_shim || is_linux || is_android || is_win,
+    "use_experimental_allocator_shim supported only on Linux, Android and Windows targets")
+
+if (is_win && use_experimental_allocator_shim) {
+  assert(!is_component_build,
+         "The allocator shim doesn't work for the component build on Windows.")
+}
