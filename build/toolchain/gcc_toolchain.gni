@@ -6,7 +6,6 @@ import("//build/config/android/config.gni")
 import("//build/config/clang/clang.gni")
 import("//build/config/nacl/config.gni")
 import("//build/config/sanitizers/sanitizers.gni")
-import("//build/config/v8_target_cpu.gni")
 import("//build/toolchain/cc_wrapper.gni")
 import("//build/toolchain/goma.gni")
 import("//build/toolchain/toolchain.gni")
@@ -105,10 +104,6 @@ template("gcc_toolchain") {
       # ensure that it's always the same, regardless of the values that may be
       # set on those toolchains.
       host_toolchain = host_toolchain
-
-      if (!defined(invoker_toolchain_args.v8_current_cpu)) {
-        v8_current_cpu = invoker_toolchain_args.current_cpu
-      }
     }
 
     # When the invoker has explicitly overridden use_goma or cc_wrapper in the

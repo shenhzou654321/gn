@@ -1010,20 +1010,6 @@ config("default_warnings") {
         "-Wno-shift-negative-value",
       ]
     }
-    if (!is_nacl && !use_xcode_clang) {
-      # Flags NaCl (Clang 3.7) and Xcode 7.3 (Clang clang-703.0.31) do not
-      # recognize.
-      cflags += [
-        # TODO(thakis): https://crbug.com/604888
-        "-Wno-undefined-var-template",
-
-        # TODO(thakis): https://crbug.com/617318
-        "-Wno-nonportable-include-path",
-
-        # TODO(hans): https://crbug.com/637306
-        "-Wno-address-of-packed-member",
-      ]
-    }
   }
 }
 
