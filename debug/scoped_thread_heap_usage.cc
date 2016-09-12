@@ -16,7 +16,7 @@
 
 #if defined(OS_MACOSX) || defined(OS_IOS)
 #include <malloc/malloc.h>
-#else
+#elif !defined(OS_FREEBSD)
 #include <malloc.h>
 #endif
 

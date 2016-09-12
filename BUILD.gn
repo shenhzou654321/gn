@@ -1443,6 +1443,10 @@ component("base") {
   }
 
   if (is_freebsd) {
+    sources -= [
+      "trace_event/malloc_dump_provider.cc",
+      "trace_event/malloc_dump_provider.h",
+    ]
     sources += [
       #"files/file_path_watcher_kqueue.cc",
       #"files/file_path_watcher_kqueue.h",
