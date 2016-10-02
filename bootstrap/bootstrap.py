@@ -522,6 +522,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/base_paths_posix.cc',
         'base/debug/debugger_posix.cc',
         'base/debug/stack_trace_posix.cc',
+        'base/files/file_descriptor_watcher_posix.cc',
         'base/files/file_enumerator_posix.cc',
         'base/files/file_posix.cc',
         'base/files/file_util_posix.cc',
