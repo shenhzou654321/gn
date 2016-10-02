@@ -13,6 +13,7 @@ before_build:
     - set PATH=%PATH%;%cd%\ninja-build
 
 build_script:
+    # Build the debug version to stay inside our allowed timeframe (1h)
     - tools\gn\bootstrap\bootstrap.py --no-clean --no-rebuild --debug
     - out_bootstrap\gn gen out/Debug
     - ninja -C out/Debug gn gn_unittests
