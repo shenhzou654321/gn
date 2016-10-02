@@ -13,8 +13,6 @@
 #include <new.h>
 #include <windows.h>
 
-#include "base/bits.h"
-
 namespace base {
 namespace allocator {
 
@@ -37,8 +35,11 @@ void* WinHeapMalloc(size_t size) {
   return nullptr;
 }
 
-void WinHeapFree(void* size) {
-  HeapFree(get_heap_handle(), 0, size);
+void WinHeapFree(void* ptr) {
+  if (!ptr)
+    return;
+
+  HeapFree(get_heap_handle(), 0, ptr);
 }
 
 void* WinHeapRealloc(void* ptr, size_t size) {
@@ -71,7 +72,7 @@ size_t WinHeapGetSizeEstimate(void* ptr) {
   const size_t kAllocationGranularity = 8;
 #endif
 
-  return base::bits::Align(size, kAllocationGranularity);
+  return (size + kAllocationGranularity - 1) & ~(kAllocationGranularity - 1);
 }
 
 // Call the new handler, if one has been set.

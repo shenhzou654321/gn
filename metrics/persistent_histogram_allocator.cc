@@ -38,6 +38,8 @@ enum : uint32_t {
   kTypeIdHistogram   = 0xF1645910 + 2,  // SHA1(Histogram)   v2
   kTypeIdRangesArray = 0xBCEA225A + 1,  // SHA1(RangesArray) v1
   kTypeIdCountsArray = 0x53215530 + 1,  // SHA1(CountsArray) v1
+
+  kTypeIdHistogramUnderConstruction = ~kTypeIdHistogram,
 };
 
 // The current globally-active persistent allocator for all new histograms.
@@ -117,7 +119,7 @@ PersistentSparseHistogramDataManager::GetSampleMapRecordsWhileLocked(
     return found->second.get();
 
   std::unique_ptr<PersistentSampleMapRecords>& samples = sample_records_[id];
-  samples = WrapUnique(new PersistentSampleMapRecords(this, id));
+  samples = MakeUnique<PersistentSampleMapRecords>(this, id);
   return samples.get();
 }
 
@@ -274,8 +276,15 @@ std::unique_ptr<HistogramBase> PersistentHistogramAllocator::GetHistogram(
       memory_allocator_->GetAsObject<PersistentHistogramData>(
           ref, kTypeIdHistogram);
   size_t length = memory_allocator_->GetAllocSize(ref);
+
+  // Check that metadata is reasonable: name is NUL terminated and non-empty,
+  // ID fields have been loaded with a hash of the name (0 is considered
+  // unset/invalid).
   if (!histogram_data ||
-      reinterpret_cast<char*>(histogram_data)[length - 1] != '\0') {
+      reinterpret_cast<char*>(histogram_data)[length - 1] != '\0' ||
+      histogram_data->name[0] == '\0' ||
+      histogram_data->samples_metadata.id == 0 ||
+      histogram_data->logged_metadata.id == 0) {
     RecordCreateHistogramResult(CREATE_HISTOGRAM_INVALID_METADATA);
     NOTREACHED();
     return nullptr;
@@ -302,14 +311,17 @@ std::unique_ptr<HistogramBase> PersistentHistogramAllocator::AllocateHistogram(
 
   // Create the metadata necessary for a persistent sparse histogram. This
   // is done first because it is a small subset of what is required for
-  // other histograms.
+  // other histograms. The type is "under construction" so that a crash
+  // during the datafill doesn't leave a bad record around that could cause
+  // confusion by another process trying to read it. It will be corrected
+  // once histogram construction is complete.
   PersistentMemoryAllocator::Reference histogram_ref =
       memory_allocator_->Allocate(
           offsetof(PersistentHistogramData, name) + name.length() + 1,
-          kTypeIdHistogram);
+          kTypeIdHistogramUnderConstruction);
   PersistentHistogramData* histogram_data =
-      memory_allocator_->GetAsObject<PersistentHistogramData>(histogram_ref,
-                                                              kTypeIdHistogram);
+      memory_allocator_->GetAsObject<PersistentHistogramData>(
+          histogram_ref, kTypeIdHistogramUnderConstruction);
   if (histogram_data) {
     memcpy(histogram_data->name, name.c_str(), name.size() + 1);
     histogram_data->histogram_type = histogram_type;
@@ -365,6 +377,11 @@ std::unique_ptr<HistogramBase> PersistentHistogramAllocator::AllocateHistogram(
     // correct before commiting the new histogram to persistent space.
     std::unique_ptr<HistogramBase> histogram = CreateHistogram(histogram_data);
     DCHECK(histogram);
+    DCHECK_NE(0U, histogram_data->samples_metadata.id);
+    DCHECK_NE(0U, histogram_data->logged_metadata.id);
+    memory_allocator_->ChangeType(histogram_ref, kTypeIdHistogram,
+                                  kTypeIdHistogramUnderConstruction);
+
     if (ref_ptr != nullptr)
       *ref_ptr = histogram_ref;
 
@@ -670,9 +687,9 @@ void GlobalHistogramAllocator::CreateWithPersistentMemory(
     size_t page_size,
     uint64_t id,
     StringPiece name) {
-  Set(WrapUnique(new GlobalHistogramAllocator(
-      WrapUnique(new PersistentMemoryAllocator(
-          base, size, page_size, id, name, false)))));
+  Set(WrapUnique(
+      new GlobalHistogramAllocator(MakeUnique<PersistentMemoryAllocator>(
+          base, size, page_size, id, name, false))));
 }
 
 // static
@@ -681,12 +698,12 @@ void GlobalHistogramAllocator::CreateWithLocalMemory(
     uint64_t id,
     StringPiece name) {
   Set(WrapUnique(new GlobalHistogramAllocator(
-      WrapUnique(new LocalPersistentMemoryAllocator(size, id, name)))));
+      MakeUnique<LocalPersistentMemoryAllocator>(size, id, name))));
 }
 
 #if !defined(OS_NACL)
 // static
-void GlobalHistogramAllocator::CreateWithFile(
+bool GlobalHistogramAllocator::CreateWithFile(
     const FilePath& file_path,
     size_t size,
     uint64_t id,
@@ -706,14 +723,55 @@ void GlobalHistogramAllocator::CreateWithFile(
   if (!mmfile->IsValid() ||
       !FilePersistentMemoryAllocator::IsFileAcceptable(*mmfile, true)) {
     NOTREACHED();
-    return;
+    return false;
   }
 
-  Set(WrapUnique(new GlobalHistogramAllocator(
-      WrapUnique(new FilePersistentMemoryAllocator(
-          std::move(mmfile), size, id, name, false)))));
+  Set(WrapUnique(
+      new GlobalHistogramAllocator(MakeUnique<FilePersistentMemoryAllocator>(
+          std::move(mmfile), size, id, name, false))));
+  Get()->SetPersistentLocation(file_path);
+  return true;
 }
-#endif
+
+// static
+bool GlobalHistogramAllocator::CreateWithActiveFile(const FilePath& base_path,
+                                                    const FilePath& active_path,
+                                                    size_t size,
+                                                    uint64_t id,
+                                                    StringPiece name) {
+  if (!base::ReplaceFile(active_path, base_path, nullptr))
+    base::DeleteFile(base_path, /*recursive=*/false);
+
+  return base::GlobalHistogramAllocator::CreateWithFile(active_path, size, id,
+                                                        name);
+}
+
+// static
+bool GlobalHistogramAllocator::CreateWithActiveFileInDir(const FilePath& dir,
+                                                         size_t size,
+                                                         uint64_t id,
+                                                         StringPiece name) {
+  FilePath base_path, active_path;
+  ConstructFilePaths(dir, name, &base_path, &active_path);
+  return CreateWithActiveFile(base_path, active_path, size, id, name);
+}
+
+// static
+void GlobalHistogramAllocator::ConstructFilePaths(const FilePath& dir,
+                                                  StringPiece name,
+                                                  FilePath* out_base_path,
+                                                  FilePath* out_active_path) {
+  if (out_base_path) {
+    *out_base_path = dir.AppendASCII(name).AddExtension(
+        PersistentMemoryAllocator::kFileExtension);
+  }
+  if (out_active_path) {
+    *out_active_path =
+        dir.AppendASCII(name.as_string() + std::string("-active"))
+            .AddExtension(PersistentMemoryAllocator::kFileExtension);
+  }
+}
+#endif  // !defined(OS_NACL)
 
 // static
 void GlobalHistogramAllocator::CreateWithSharedMemory(
@@ -728,9 +786,9 @@ void GlobalHistogramAllocator::CreateWithSharedMemory(
   }
 
   DCHECK_LE(memory->mapped_size(), size);
-  Set(WrapUnique(new GlobalHistogramAllocator(
-      WrapUnique(new SharedPersistentMemoryAllocator(
-          std::move(memory), 0, StringPiece(), /*readonly=*/false)))));
+  Set(WrapUnique(
+      new GlobalHistogramAllocator(MakeUnique<SharedPersistentMemoryAllocator>(
+          std::move(memory), 0, StringPiece(), /*readonly=*/false))));
 }
 
 // static
@@ -745,9 +803,9 @@ void GlobalHistogramAllocator::CreateWithSharedMemoryHandle(
     return;
   }
 
-  Set(WrapUnique(new GlobalHistogramAllocator(
-      WrapUnique(new SharedPersistentMemoryAllocator(
-          std::move(shm), 0, StringPiece(), /*readonly=*/false)))));
+  Set(WrapUnique(
+      new GlobalHistogramAllocator(MakeUnique<SharedPersistentMemoryAllocator>(
+          std::move(shm), 0, StringPiece(), /*readonly=*/false))));
 }
 
 // static
@@ -837,10 +895,30 @@ bool GlobalHistogramAllocator::WriteToPersistentLocation() {
 #endif
 }
 
+void GlobalHistogramAllocator::DeletePersistentLocation() {
+#if defined(OS_NACL)
+  NOTREACHED();
+#else
+  if (persistent_location_.empty())
+    return;
+
+  // Open (with delete) and then immediately close the file by going out of
+  // scope. This is the only cross-platform safe way to delete a file that may
+  // be open elsewhere. Open handles will continue to operate normally but
+  // new opens will not be possible.
+  File file(persistent_location_,
+            File::FLAG_OPEN | File::FLAG_READ | File::FLAG_DELETE_ON_CLOSE);
+#endif
+}
+
 GlobalHistogramAllocator::GlobalHistogramAllocator(
     std::unique_ptr<PersistentMemoryAllocator> memory)
     : PersistentHistogramAllocator(std::move(memory)),
-      import_iterator_(this) {}
+      import_iterator_(this) {
+  // Make sure the StatisticsRecorder is initialized to prevent duplicate
+  // histograms from being created. It's safe to call this multiple times.
+  StatisticsRecorder::Initialize();
+}
 
 void GlobalHistogramAllocator::ImportHistogramsToStatisticsRecorder() {
   // Skip the import if it's the histogram that was last created. Should a
