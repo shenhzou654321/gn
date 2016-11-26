@@ -133,7 +133,19 @@ PersistentMemoryAllocator::Iterator::Iterator(
 PersistentMemoryAllocator::Iterator::Iterator(
     const PersistentMemoryAllocator* allocator,
     Reference starting_after)
-    : allocator_(allocator), last_record_(starting_after), record_count_(0) {
+    : allocator_(allocator), last_record_(0), record_count_(0) {
+  Reset(starting_after);
+}
+
+void PersistentMemoryAllocator::Iterator::Reset() {
+  last_record_.store(kReferenceQueue, std::memory_order_relaxed);
+  record_count_.store(0, std::memory_order_relaxed);
+}
+
+void PersistentMemoryAllocator::Iterator::Reset(Reference starting_after) {
+  last_record_.store(starting_after, std::memory_order_relaxed);
+  record_count_.store(0, std::memory_order_relaxed);
+
   // Ensure that the starting point is a valid, iterable block (meaning it can
   // be read and has a non-zero "next" pointer).
   const volatile BlockHeader* block =
@@ -142,6 +154,14 @@ PersistentMemoryAllocator::Iterator::Iterator(
     NOTREACHED();
     last_record_.store(kReferenceQueue, std::memory_order_release);
   }
+}
+
+PersistentMemoryAllocator::Reference
+PersistentMemoryAllocator::Iterator::GetLast() {
+  Reference last = last_record_.load(std::memory_order_relaxed);
+  if (last == kReferenceQueue)
+    return kReferenceNull;
+  return last;
 }
 
 PersistentMemoryAllocator::Reference
@@ -275,6 +295,14 @@ PersistentMemoryAllocator::PersistentMemoryAllocator(Memory memory,
       corrupt_(0),
       allocs_histogram_(nullptr),
       used_histogram_(nullptr) {
+  // These asserts ensure that the structures are 32/64-bit agnostic and meet
+  // all the requirements of use within the allocator. They access private
+  // definitions and so cannot be moved to the global scope.
+  static_assert(sizeof(PersistentMemoryAllocator::BlockHeader) == 16,
+                "struct is not portable across different natural word widths");
+  static_assert(sizeof(PersistentMemoryAllocator::SharedMetadata) == 56,
+                "struct is not portable across different natural word widths");
+
   static_assert(sizeof(BlockHeader) % kAllocAlignment == 0,
                 "BlockHeader is not a multiple of kAllocAlignment");
   static_assert(sizeof(SharedMetadata) % kAllocAlignment == 0,
@@ -340,7 +368,7 @@ PersistentMemoryAllocator::PersistentMemoryAllocator(Memory memory,
     if (!name.empty()) {
       const size_t name_length = name.length() + 1;
       shared_meta()->name = Allocate(name_length, 0);
-      char* name_cstr = GetAsObject<char>(shared_meta()->name, 0);
+      char* name_cstr = GetAsArray<char>(shared_meta()->name, 0, name_length);
       if (name_cstr)
         memcpy(name_cstr, name.data(), name.length());
     }
@@ -388,7 +416,8 @@ uint64_t PersistentMemoryAllocator::Id() const {
 
 const char* PersistentMemoryAllocator::Name() const {
   Reference name_ref = shared_meta()->name;
-  const char* name_cstr = GetAsObject<char>(name_ref, 0);
+  const char* name_cstr =
+      GetAsArray<char>(name_ref, 0, PersistentMemoryAllocator::kSizeAny);
   if (!name_cstr)
     return "";
 

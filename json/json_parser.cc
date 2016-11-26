@@ -151,9 +151,7 @@ class JSONStringValue : public Value {
     *out_value = UTF8ToUTF16(string_piece_);
     return true;
   }
-  Value* DeepCopy() const override {
-    return new StringValue(string_piece_.as_string());
-  }
+  Value* DeepCopy() const override { return new StringValue(string_piece_); }
   bool Equals(const Value* other) const override {
     std::string other_string;
     return other->IsType(TYPE_STRING) && other->GetAsString(&other_string) &&
@@ -189,6 +187,9 @@ class StackMarker {
 };
 
 }  // namespace
+
+// This is U+FFFD.
+const char kUnicodeReplacementString[] = "\xEF\xBF\xBD";
 
 JSONParser::JSONParser(int options)
     : options_(options),
@@ -628,11 +629,18 @@ bool JSONParser::ConsumeStringRaw(StringBuilder* out) {
   int32_t next_char = 0;
 
   while (CanConsume(1)) {
+    int start_index = index_;
     pos_ = start_pos_ + index_;  // CBU8_NEXT is postcrement.
     CBU8_NEXT(start_pos_, index_, length, next_char);
     if (next_char < 0 || !IsValidCharacter(next_char)) {
-      ReportError(JSONReader::JSON_UNSUPPORTED_ENCODING, 1);
-      return false;
+      if ((options_ & JSON_REPLACE_INVALID_CHARACTERS) == 0) {
+        ReportError(JSONReader::JSON_UNSUPPORTED_ENCODING, 1);
+        return false;
+      }
+      CBU8_NEXT(start_pos_, start_index, length, next_char);
+      string.Convert();
+      string.AppendString(kUnicodeReplacementString);
+      continue;
     }
 
     if (next_char == '"') {

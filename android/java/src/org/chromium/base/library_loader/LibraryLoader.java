@@ -4,6 +4,7 @@
 
 package org.chromium.base.library_loader;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.AsyncTask;
 import android.os.SystemClock;
@@ -14,6 +15,7 @@ import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.MainDex;
 import org.chromium.base.metrics.RecordHistogram;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,6 +37,7 @@ import javax.annotation.Nullable;
  * the native counterpart to this class.
  */
 @JNINamespace("base::android")
+@MainDex
 public class LibraryLoader {
     private static final String TAG = "LibraryLoader";
 
@@ -259,6 +262,8 @@ public class LibraryLoader {
 
     // Invoke either Linker.loadLibrary(...) or System.loadLibrary(...), triggering
     // JNI_OnLoad in native code
+    // TODO(crbug.com/635567): Fix this properly.
+    @SuppressLint("DefaultLocale")
     private void loadAlreadyLocked(Context appContext) throws ProcessInitException {
         try {
             if (!mLoaded) {
@@ -328,12 +333,6 @@ public class LibraryLoader {
         if (!NativeLibraries.sVersionNumber.equals(nativeGetVersionNumber())) {
             throw new ProcessInitException(LoaderErrors.LOADER_ERROR_NATIVE_LIBRARY_WRONG_VERSION);
         }
-    }
-
-    // Returns whether the given split name is that of the ABI split.
-    private static boolean isAbiSplit(String splitName) {
-        // The split name for the ABI split is manually set in the build rules.
-        return splitName.startsWith("abi_");
     }
 
     // The WebView requires the Command Line to be switched over before

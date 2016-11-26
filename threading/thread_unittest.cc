@@ -5,6 +5,7 @@
 #include "base/threading/thread.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include <vector>
 
@@ -136,14 +137,16 @@ void ReturnThreadId(base::Thread* thread,
 TEST_F(ThreadTest, StartWithOptions_StackSize) {
   Thread a("StartWithStackSize");
   // Ensure that the thread can work with only 12 kb and still process a
-  // message.
+  // message. At the same time, we should scale with the bitness of the system
+  // where 12 kb is definitely not enough.
+  // 12 kb = 3072 Slots on a 32-bit system, so we'll scale based off of that.
   Thread::Options options;
 #if defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
-  // ASan bloats the stack variables and overflows the 12 kb stack. Some debug
-  // builds also grow the stack too much.
-  options.stack_size = 24*1024;
+  // ASan bloats the stack variables and overflows the 3072 slot stack. Some
+  // debug builds also grow the stack too much.
+  options.stack_size = 2 * 3072 * sizeof(uintptr_t);
 #else
-  options.stack_size = 12*1024;
+  options.stack_size = 3072 * sizeof(uintptr_t);
 #endif
   EXPECT_TRUE(a.StartWithOptions(options));
   EXPECT_TRUE(a.message_loop());
@@ -483,6 +486,12 @@ class ExternalMessageLoopThread : public Thread {
 
   void InstallMessageLoop() { SetMessageLoop(&external_message_loop_); }
 
+  void VerifyUsingExternalMessageLoop(
+      bool expected_using_external_message_loop) {
+    EXPECT_EQ(expected_using_external_message_loop,
+              using_external_message_loop());
+  }
+
  private:
   base::MessageLoop external_message_loop_;
 
@@ -495,10 +504,12 @@ TEST_F(ThreadTest, ExternalMessageLoop) {
   ExternalMessageLoopThread a;
   EXPECT_FALSE(a.message_loop());
   EXPECT_FALSE(a.IsRunning());
+  a.VerifyUsingExternalMessageLoop(false);
 
   a.InstallMessageLoop();
   EXPECT_TRUE(a.message_loop());
   EXPECT_TRUE(a.IsRunning());
+  a.VerifyUsingExternalMessageLoop(true);
 
   bool ran = false;
   a.task_runner()->PostTask(
@@ -509,6 +520,7 @@ TEST_F(ThreadTest, ExternalMessageLoop) {
   a.Stop();
   EXPECT_FALSE(a.message_loop());
   EXPECT_FALSE(a.IsRunning());
+  a.VerifyUsingExternalMessageLoop(true);
 
   // Confirm that running any remaining tasks posted from Stop() goes smoothly
   // (e.g. https://codereview.chromium.org/2135413003/#ps300001 crashed if
