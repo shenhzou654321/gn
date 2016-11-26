@@ -204,7 +204,6 @@ places are noted in the table below.
 | `arm_version`                                   | `arm_version`                              | `//build/config/arm.gni`                       |
 | `asan` (0/1)                                    | `is_asan` (true/false)                     | `//build/config/sanitizers/sanitizers.gni`     |
 | `branding` ("Chromium"/"Chrome")                | `is_chrome_branded` (true/false)           | `//build/config/chrome_build.gni`              |
-| `build_for_tool=="drmemory"`                    | `enable_iterator_debugging=false`          | (internal to `//build/config/BUILD.gn`)        |
 | `build_for_tool=="tsan"`                        | `enable_iterator_debugging=false`          | (internal to `//build/config/BUILD.gn`)        |
 | `buildtype` ("Official"/"Dev")                  | `is_official_build` (true/false)           | `//build/config/chrome_build.gni`              |
 | `chrome_multiple_dll` (0/1)                     | `is_multi_dll_chrome` (true/false)         | `//build/config/chrome_build.gni`              |
@@ -253,13 +252,12 @@ places are noted in the table below.
 | `enable_managed_users` (0/1)            | `enable_managed_users` (true/false)            | `//build/config/features.gni` |
 | `enable_mdns` (0/1)                     | `enable_mdns` (true/false)                     | `//build/config/features.gni` |
 | `enable_one_click_signin` (0/1)         | `enable_one_click_signin` (true/false)         | `//chrome/common/features.gni` |
-| `enable_pepper_cdms` (0/1)              | `enable_pepper_cdms` (true/false)              | `//build/config/features.gni` |
+| `enable_pepper_cdms` (0/1)              | `enable_pepper_cdms` (true/false)              | `//ppapi/features/features.gni` |
 | `enable_plugins` (0/1)                  | `enable_plugins` (true/false)                  | `//build/config/features.gni` |
 | `enable_plugin_installation` (0/1)      | `enable_plugin_installation` (true/false)      | `//build/config/features.gni` |
 | `enable_basic_printing` (0/1)           | `enable_basic_printing` (true/false)           | `//build/config/features.gni` |
 | `enable_print_preview` (0/1)            | `enable_print_preview` (true/false)            | `//build/config/features.gni` |
 | `enable_rlz` (0/1)                      | `enable_rlz` (true/false)                      | `//build/config/features.gni` |
-| `enable_service_discovery` (0/1)        | `enable_service_discovery` (true/false)        | `//build/config/features.gni` |
 | `enable_spellcheck` (0/1)               | `enable_spellcheck` (true/false)               | `//build/config/features.gni` |
 | `enable_session_service` (0/1)          | `enable_session_service` (true/false)          | `//build/config/features.gni` |
 | `enable_task_manager` (0/1)             | `enable_task_manager` (true/false)             | `//build/config/features.gni` |
@@ -276,9 +274,7 @@ places are noted in the table below.
 | `use_ash` (0/1)                         | `use_ash` (true/false)                         | `//build/config/ui.gni`       |
 | `use_athena` (0/1)                      | `use_athena` (true/false)                      | `//build/config/ui.gni`       |
 | `use_aura` (0/1)                        | `use_aura` (true/false)                        | `//build/config/ui.gni`       |
-| `use_brlapi` (0/1)                      | `use_brlapi` (true/false)                      | `//build/config/features.gni` |
 | `use_cairo` (0/1)                       | `use_cairo` (true/false)                       | `//build/config/ui.gni`       |
-| `use_clipboard_aurax11` (0/1)           | `use_aura && use_x11`                          |                               |
 | `use_cups` (0/1)                        | `use_cups` (true/false)                        | `//build/config/features.gni` |
 | `use_dbus` (0/1)                        | `use_dbus` (true/false)                        | `//build/config/features.gni` |
 | `use_gconf` (0/1)                       | `use_gconf` (true/false)                       | `//build/config/features.gni` |
