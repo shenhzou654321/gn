@@ -165,7 +165,10 @@ def build_gn_with_ninja_manually(tempdir, options):
       {'USE_EXPERIMENTAL_ALLOCATOR_SHIM': 'true' if is_linux else 'false'})
 
   write_buildflag_header_manually(root_gen_dir, 'base/debug/debugging_flags.h',
-      {'ENABLE_PROFILING': 'false'})
+      {
+          'ENABLE_PROFILING': 'false',
+          'ENABLE_MEMORY_TASK_PROFILER': 'false'
+      })
 
   if is_mac:
     # //base/build_time.cc needs base/generated_build_date.h,
@@ -407,6 +410,7 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/memory/ref_counted.cc',
       'base/memory/ref_counted_memory.cc',
       'base/memory/singleton.cc',
+      'base/memory/shared_memory_helper.cc',
       'base/memory/weak_ptr.cc',
       'base/message_loop/incoming_task_queue.cc',
       'base/message_loop/message_loop.cc',
@@ -461,6 +465,7 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/task_scheduler/scheduler_worker_pool_impl.cc',
       'base/task_scheduler/scheduler_worker_pool_params.cc',
       'base/task_scheduler/scheduler_worker_stack.cc',
+      'base/task_scheduler/scoped_set_task_priority_for_current_thread.cc',
       'base/task_scheduler/sequence.cc',
       'base/task_scheduler/sequence_sort_key.cc',
       'base/task_scheduler/task.cc',
@@ -489,9 +494,11 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/timer/elapsed_timer.cc',
       'base/timer/timer.cc',
       'base/trace_event/category_registry.cc',
+      'base/trace_event/event_name_filter.cc',
       'base/trace_event/heap_profiler_allocation_context.cc',
       'base/trace_event/heap_profiler_allocation_context_tracker.cc',
       'base/trace_event/heap_profiler_allocation_register.cc',
+      'base/trace_event/heap_profiler_event_filter.cc',
       'base/trace_event/heap_profiler_heap_dump_writer.cc',
       'base/trace_event/heap_profiler_stack_frame_deduplicator.cc',
       'base/trace_event/heap_profiler_type_name_deduplicator.cc',
@@ -507,6 +514,7 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/trace_event/trace_buffer.cc',
       'base/trace_event/trace_config.cc',
       'base/trace_event/trace_event_argument.cc',
+      'base/trace_event/trace_event_filter.cc',
       'base/trace_event/trace_event_impl.cc',
       'base/trace_event/trace_event_memory_overhead.cc',
       'base/trace_event/trace_event_synthetic_delay.cc',
