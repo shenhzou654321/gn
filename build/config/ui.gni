@@ -34,8 +34,7 @@ declare_args() {
   use_aura = is_win || is_linux
 
   # True means the UI is built using the "views" framework.
-  toolkit_views =
-      (is_mac || is_win || is_chromeos || use_aura) && !is_chromecast
+  toolkit_views = false
 
   # Whether the entire browser uses toolkit-views on Mac instead of Cocoa.
   mac_views_browser = false
