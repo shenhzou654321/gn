@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-#if defined(__GLIBCXX__)
+#if !defined(USE_SYMBOLIZE)
 #include <cxxabi.h>
 #endif
 #if !defined(__UCLIBC__)
@@ -33,8 +33,11 @@
 #include <AvailabilityMacros.h>
 #endif
 
-#include "base/debug/debugger.h"
+#if defined(OS_LINUX)
 #include "base/debug/proc_maps_linux.h"
+#endif
+
+#include "base/debug/debugger.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/free_deleter.h"
@@ -55,7 +58,7 @@ namespace {
 
 volatile sig_atomic_t in_signal_handler = 0;
 
-#if !defined(USE_SYMBOLIZE) && defined(__GLIBCXX__)
+#if !defined(USE_SYMBOLIZE)
 // The prefix used for mangled symbols, per the Itanium C++ ABI:
 // http://www.codesourcery.com/cxx-abi/abi.html#mangling
 const char kMangledSymbolPrefix[] = "_Z";
@@ -64,7 +67,7 @@ const char kMangledSymbolPrefix[] = "_Z";
 // (('a'..'z').to_a+('A'..'Z').to_a+('0'..'9').to_a + ['_']).join
 const char kSymbolCharacters[] =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
-#endif  // !defined(USE_SYMBOLIZE) && defined(__GLIBCXX__)
+#endif  // !defined(USE_SYMBOLIZE)
 
 #if !defined(USE_SYMBOLIZE)
 // Demangles C++ symbols in the given text. Example:
@@ -76,7 +79,7 @@ void DemangleSymbols(std::string* text) {
   // Note: code in this function is NOT async-signal safe (std::string uses
   // malloc internally).
 
-#if defined(__GLIBCXX__) && !defined(__UCLIBC__)
+#if !defined(__UCLIBC__)
 
   std::string::size_type search_from = 0;
   while (search_from < text->size()) {
@@ -112,8 +115,7 @@ void DemangleSymbols(std::string* text) {
       search_from = mangled_start + 2;
     }
   }
-
-#endif  // defined(__GLIBCXX__) && !defined(__UCLIBC__)
+#endif  // !defined(__UCLIBC__)
 }
 #endif  // !defined(USE_SYMBOLIZE)
 

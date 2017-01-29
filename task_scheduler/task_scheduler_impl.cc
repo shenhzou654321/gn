@@ -14,7 +14,6 @@
 #include "base/task_scheduler/sequence_sort_key.h"
 #include "base/task_scheduler/task.h"
 #include "base/task_scheduler/task_tracker.h"
-#include "base/time/time.h"
 #include "build/build_config.h"
 
 #if defined(OS_POSIX) && !defined(OS_NACL_SFI)
@@ -41,13 +40,14 @@ TaskSchedulerImpl::~TaskSchedulerImpl() {
 #endif
 }
 
-void TaskSchedulerImpl::PostTaskWithTraits(
+void TaskSchedulerImpl::PostDelayedTaskWithTraits(
     const tracked_objects::Location& from_here,
     const TaskTraits& traits,
-    const Closure& task) {
+    const Closure& task,
+    TimeDelta delay) {
   // Post |task| as part of a one-off single-task Sequence.
   GetWorkerPoolForTraits(traits)->PostTaskWithSequence(
-      MakeUnique<Task>(from_here, task, traits, TimeDelta()),
+      MakeUnique<Task>(from_here, task, traits, delay),
       make_scoped_refptr(new Sequence), nullptr);
 }
 
@@ -93,6 +93,8 @@ void TaskSchedulerImpl::JoinForTesting() {
 #if DCHECK_IS_ON()
   DCHECK(!join_for_testing_returned_.IsSet());
 #endif
+  for (const auto& worker_pool : worker_pools_)
+    worker_pool->DisallowWorkerDetachmentForTesting();
   for (const auto& worker_pool : worker_pools_)
     worker_pool->JoinForTesting();
   service_thread_.Stop();

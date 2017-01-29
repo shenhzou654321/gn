@@ -44,15 +44,13 @@ class BASE_EXPORT TaskSchedulerImpl : public TaskScheduler {
       const WorkerPoolIndexForTraitsCallback&
           worker_pool_index_for_traits_callback);
 
-  // Destroying a TaskSchedulerImpl is not allowed in production; it is always
-  // leaked. In tests, it can only be destroyed after JoinForTesting() has
-  // returned.
   ~TaskSchedulerImpl() override;
 
   // TaskScheduler:
-  void PostTaskWithTraits(const tracked_objects::Location& from_here,
-                          const TaskTraits& traits,
-                          const Closure& task) override;
+  void PostDelayedTaskWithTraits(const tracked_objects::Location& from_here,
+                                 const TaskTraits& traits,
+                                 const Closure& task,
+                                 TimeDelta delay) override;
   scoped_refptr<TaskRunner> CreateTaskRunnerWithTraits(
       const TaskTraits& traits) override;
   scoped_refptr<SequencedTaskRunner> CreateSequencedTaskRunnerWithTraits(
