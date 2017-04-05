@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/buildflag_header.gni")
-import("//build/config/sanitizers/sanitizers.gni")
 import("//build/win/message_compiler.gni")
 
 declare_args() {
@@ -27,7 +26,6 @@ buildflag_header("base_win_features") {
 message_compiler("eventlog_messages") {
   visibility = [
     "//base:base",
-    ":eventlog_provider",
   ]
 
   sources = [
@@ -36,18 +34,4 @@ message_compiler("eventlog_messages") {
 
   user_mode_logging = false
   compile_generated_code = false
-}
-shared_library("eventlog_provider") {
-  sources = [
-    "$root_gen_dir/base/win/eventlog_messages.rc",
-    "eventlog_provider.cc",
-  ]
-
-  if (!is_asan) {
-    ldflags = [ "/NOENTRY" ]
-  }
-
-  deps = [
-    "//base/win:eventlog_messages",
-  ]
 }

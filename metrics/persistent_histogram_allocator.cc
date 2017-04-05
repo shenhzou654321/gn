@@ -322,7 +322,7 @@ std::unique_ptr<HistogramBase> PersistentHistogramAllocator::AllocateHistogram(
   // confusion by another process trying to read it. It will be corrected
   // once histogram construction is complete.
   PersistentHistogramData* histogram_data =
-      memory_allocator_->AllocateObject<PersistentHistogramData>(
+      memory_allocator_->New<PersistentHistogramData>(
           offsetof(PersistentHistogramData, name) + name.length() + 1);
   if (histogram_data) {
     memcpy(histogram_data->name, name.c_str(), name.size() + 1);
@@ -428,7 +428,8 @@ void PersistentHistogramAllocator::FinalizeHistogram(Reference ref,
     // be created. The allocator does not support releasing the acquired memory
     // so just change the type to be empty.
     memory_allocator_->ChangeType(ref, 0,
-                                  PersistentHistogramData::kPersistentTypeId);
+                                  PersistentHistogramData::kPersistentTypeId,
+                                  /*clear=*/false);
   }
 }
 
@@ -784,24 +785,6 @@ void GlobalHistogramAllocator::ConstructFilePaths(const FilePath& dir,
 #endif  // !defined(OS_NACL)
 
 // static
-void GlobalHistogramAllocator::CreateWithSharedMemory(
-    std::unique_ptr<SharedMemory> memory,
-    size_t size,
-    uint64_t id,
-    StringPiece name) {
-  if ((!memory->memory() && !memory->Map(size)) ||
-      !SharedPersistentMemoryAllocator::IsSharedMemoryAcceptable(*memory)) {
-    NOTREACHED();
-    return;
-  }
-
-  DCHECK_LE(memory->mapped_size(), size);
-  Set(WrapUnique(
-      new GlobalHistogramAllocator(MakeUnique<SharedPersistentMemoryAllocator>(
-          std::move(memory), 0, StringPiece(), /*readonly=*/false))));
-}
-
-// static
 void GlobalHistogramAllocator::CreateWithSharedMemoryHandle(
     const SharedMemoryHandle& handle,
     size_t size) {
@@ -825,8 +808,8 @@ void GlobalHistogramAllocator::Set(
   // likely has histograms stored within it. If the backing memory is also
   // also released, future accesses to those histograms will seg-fault.
   CHECK(!subtle::NoBarrier_Load(&g_allocator));
-  subtle::NoBarrier_Store(&g_allocator,
-                          reinterpret_cast<uintptr_t>(allocator.release()));
+  subtle::Release_Store(&g_allocator,
+                        reinterpret_cast<uintptr_t>(allocator.release()));
   size_t existing = StatisticsRecorder::GetHistogramCount();
 
   DVLOG_IF(1, existing)
@@ -836,7 +819,7 @@ void GlobalHistogramAllocator::Set(
 // static
 GlobalHistogramAllocator* GlobalHistogramAllocator::Get() {
   return reinterpret_cast<GlobalHistogramAllocator*>(
-      subtle::NoBarrier_Load(&g_allocator));
+      subtle::Acquire_Load(&g_allocator));
 }
 
 // static
@@ -866,7 +849,7 @@ GlobalHistogramAllocator::ReleaseForTesting() {
     DCHECK_NE(kResultHistogram, data->name);
   }
 
-  subtle::NoBarrier_Store(&g_allocator, 0);
+  subtle::Release_Store(&g_allocator, 0);
   return WrapUnique(histogram_allocator);
 };
 
@@ -904,6 +887,8 @@ bool GlobalHistogramAllocator::WriteToPersistentLocation() {
 }
 
 void GlobalHistogramAllocator::DeletePersistentLocation() {
+  memory_allocator()->SetMemoryState(PersistentMemoryAllocator::MEMORY_DELETED);
+
 #if defined(OS_NACL)
   NOTREACHED();
 #else

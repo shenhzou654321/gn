@@ -12,11 +12,17 @@
 #include "base/task_scheduler/post_task.h"
 #include "base/task_scheduler/task_scheduler.h"
 #include "base/task_scheduler/test_utils.h"
+#include "base/test/scoped_mock_time_message_loop_task_runner.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_WIN)
+#include <objbase.h>
+#endif  // defined(OS_WIN)
 
 namespace base {
 namespace test {
@@ -222,6 +228,32 @@ TEST(ScopedTaskSchedulerTest, CreateSingleThreadTaskRunnerAndPostTask) {
   EXPECT_TRUE(second_task_ran);
 }
 
+#if defined(OS_WIN)
+// Verify that COM STAs work correctly from the ScopedTaskScheduler.
+TEST(ScopedTaskSchedulerTest, COMSTAAvailable) {
+  ScopedTaskScheduler scoped_task_scheduler;
+  auto com_task_runner = CreateCOMSTATaskRunnerWithTraits(TaskTraits());
+
+  bool com_task_ran = false;
+  com_task_runner->PostTask(
+      FROM_HERE,
+      Bind(
+          [](bool* com_task_ran) {
+            *com_task_ran = true;
+            HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            if (SUCCEEDED(hr)) {
+              ADD_FAILURE() << "COM STA was not initialized on this thread";
+              CoUninitialize();
+            }
+          },
+          &com_task_ran));
+
+  RunLoop().RunUntilIdle();
+
+  EXPECT_TRUE(com_task_ran);
+}
+#endif  // defined(OS_WIN)
+
 TEST(ScopedTaskSchedulerTest, NonBlockShutdownTasksPostedAfterShutdownDontRun) {
   ScopedTaskScheduler scoped_task_scheduler;
   TaskScheduler::GetInstance()->Shutdown();
@@ -265,6 +297,50 @@ TEST(ScopedTaskSchedulerTest, DestructorRunsBlockShutdownTasksOnly) {
                            Unretained(&block_shutdown_task_ran)));
   }
   EXPECT_TRUE(block_shutdown_task_ran);
+}
+
+TEST(ScopedTaskSchedulerTest, ReassignCurrentTaskRunner) {
+  bool first_task_ran = false;
+  bool second_task_ran = false;
+
+  auto TestTaskRan = [](bool* task_ran) { *task_ran = true; };
+
+  ScopedTaskScheduler scoped_task_scheduler;
+  {
+    ScopedMockTimeMessageLoopTaskRunner mock_time_task_runner;
+    PostDelayedTask(FROM_HERE, Bind(TestTaskRan, Unretained(&first_task_ran)),
+                    TimeDelta::FromSeconds(1));
+
+    // The delayed task should be queued on |mock_time_task_runner|, not the
+    // default task runner.
+    EXPECT_TRUE(mock_time_task_runner.task_runner()->HasPendingTask());
+  }
+
+  PostDelayedTask(FROM_HERE, Bind(TestTaskRan, Unretained(&second_task_ran)),
+                  TimeDelta());
+
+  RunLoop().RunUntilIdle();
+
+  // We never pumped |mock_time_task_runner| so the first task should not have
+  // run.
+  EXPECT_FALSE(first_task_ran);
+  EXPECT_TRUE(second_task_ran);
+}
+
+// Verify that a task can be posted from a task running in ScopedTaskScheduler.
+TEST(ScopedTaskSchedulerTest, ReentrantTaskRunner) {
+  bool task_ran = false;
+  ScopedTaskScheduler scoped_task_scheduler;
+  PostTask(FROM_HERE, Bind(
+                          [](bool* task_ran) {
+                            PostTask(
+                                FROM_HERE,
+                                Bind([](bool* task_ran) { *task_ran = true; },
+                                     Unretained(task_ran)));
+                          },
+                          Unretained(&task_ran)));
+  RunLoop().RunUntilIdle();
+  EXPECT_TRUE(task_ran);
 }
 
 }  // namespace test

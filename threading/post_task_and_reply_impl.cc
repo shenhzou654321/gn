@@ -4,8 +4,9 @@
 
 #include "base/threading/post_task_and_reply_impl.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/callback.h"
 #include "base/debug/leak_annotations.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
@@ -28,22 +29,21 @@ namespace {
 class PostTaskAndReplyRelay {
  public:
   PostTaskAndReplyRelay(const tracked_objects::Location& from_here,
-                        const Closure& task,
-                        const Closure& reply)
+                        Closure task,
+                        Closure reply)
       : sequence_checker_(),
         from_here_(from_here),
         origin_task_runner_(SequencedTaskRunnerHandle::Get()),
-        reply_(reply),
-        task_(task) {}
+        reply_(std::move(reply)),
+        task_(std::move(task)) {}
 
   ~PostTaskAndReplyRelay() {
     DCHECK(sequence_checker_.CalledOnValidSequence());
-    task_.Reset();
-    reply_.Reset();
   }
 
   void RunTaskAndPostReply() {
     task_.Run();
+    task_.Reset();
     origin_task_runner_->PostTask(
         from_here_, Bind(&PostTaskAndReplyRelay::RunReplyAndSelfDestruct,
                          base::Unretained(this)));
@@ -53,10 +53,10 @@ class PostTaskAndReplyRelay {
   void RunReplyAndSelfDestruct() {
     DCHECK(sequence_checker_.CalledOnValidSequence());
 
-    // Force |task_| to be released before |reply_| is to ensure that no one
-    // accidentally depends on |task_| keeping one of its arguments alive while
-    // |reply_| is executing.
-    task_.Reset();
+    // Ensure |task_| has already been released before |reply_| to ensure that
+    // no one accidentally depends on |task_| keeping one of its arguments alive
+    // while |reply_| is executing.
+    DCHECK(!task_);
 
     reply_.Run();
 
@@ -77,12 +77,12 @@ namespace internal {
 
 bool PostTaskAndReplyImpl::PostTaskAndReply(
     const tracked_objects::Location& from_here,
-    const Closure& task,
-    const Closure& reply) {
+    Closure task,
+    Closure reply) {
   DCHECK(!task.is_null()) << from_here.ToString();
   DCHECK(!reply.is_null()) << from_here.ToString();
   PostTaskAndReplyRelay* relay =
-      new PostTaskAndReplyRelay(from_here, task, reply);
+      new PostTaskAndReplyRelay(from_here, std::move(task), std::move(reply));
   // PostTaskAndReplyRelay self-destructs after executing |reply|. On the flip
   // side though, it is intentionally leaked if the |task| doesn't complete
   // before the origin sequence stops executing tasks. Annotate |relay| as leaky

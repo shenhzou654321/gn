@@ -7,9 +7,11 @@
 #include <stdint.h>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind_helpers.h"
+#include "base/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/message_loop/message_loop.h"
@@ -25,10 +27,12 @@
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_provider.h"
+#include "base/trace_event/memory_dump_scheduler.h"
 #include "base/trace_event/memory_infra_background_whitelist.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_buffer.h"
 #include "base/trace_event/trace_config_memory_test_util.h"
+#include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -101,10 +105,10 @@ void OnTraceDataCollected(Closure quit_closure,
 // Posts |task| to |task_runner| and blocks until it is executed.
 void PostTaskAndWait(const tracked_objects::Location& from_here,
                      SequencedTaskRunner* task_runner,
-                     const base::Closure& task) {
+                     base::Closure task) {
   base::WaitableEvent event(WaitableEvent::ResetPolicy::MANUAL,
                             WaitableEvent::InitialState::NOT_SIGNALED);
-  task_runner->PostTask(from_here, task);
+  task_runner->PostTask(from_here, std::move(task));
   task_runner->PostTask(
       FROM_HERE, base::Bind(&WaitableEvent::Signal, base::Unretained(&event)));
   // The SequencedTaskRunner guarantees that |event| will only be signaled after
@@ -112,13 +116,12 @@ void PostTaskAndWait(const tracked_objects::Location& from_here,
   event.Wait();
 }
 
-}  // namespace
-
 // Testing MemoryDumpManagerDelegate which, by default, short-circuits dump
 // requests locally to the MemoryDumpManager instead of performing IPC dances.
 class MemoryDumpManagerDelegateForTesting : public MemoryDumpManagerDelegate {
  public:
-  MemoryDumpManagerDelegateForTesting() {
+  MemoryDumpManagerDelegateForTesting(bool is_coordinator)
+      : is_coordinator_(is_coordinator) {
     ON_CALL(*this, RequestGlobalMemoryDump(_, _))
         .WillByDefault(Invoke(
             this, &MemoryDumpManagerDelegateForTesting::CreateProcessDump));
@@ -128,13 +131,13 @@ class MemoryDumpManagerDelegateForTesting : public MemoryDumpManagerDelegate {
                void(const MemoryDumpRequestArgs& args,
                     const MemoryDumpCallback& callback));
 
-  uint64_t GetTracingProcessId() const override {
-    NOTREACHED();
-    return MemoryDumpManager::kInvalidTracingProcessId;
-  }
+  bool IsCoordinator() const override { return is_coordinator_; }
 
   // Promote the CreateProcessDump to public so it can be used by test fixtures.
   using MemoryDumpManagerDelegate::CreateProcessDump;
+
+ private:
+  bool is_coordinator_;
 };
 
 class MockMemoryDumpProvider : public MemoryDumpProvider {
@@ -179,19 +182,19 @@ class TestSequencedTaskRunner : public SequencedTaskRunner {
   unsigned no_of_post_tasks() const { return num_of_post_tasks_; }
 
   bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
-                                  const Closure& task,
+                                  Closure task,
                                   TimeDelta delay) override {
     NOTREACHED();
     return false;
   }
 
   bool PostDelayedTask(const tracked_objects::Location& from_here,
-                       const Closure& task,
+                       Closure task,
                        TimeDelta delay) override {
     num_of_post_tasks_++;
     if (enabled_) {
       return worker_pool_.pool()->PostSequencedWorkerTask(token_, from_here,
-                                                          task);
+                                                          std::move(task));
     }
     return false;
   }
@@ -209,6 +212,8 @@ class TestSequencedTaskRunner : public SequencedTaskRunner {
   unsigned num_of_post_tasks_;
 };
 
+}  // namespace
+
 class MemoryDumpManagerTest : public testing::Test {
  public:
   MemoryDumpManagerTest() : testing::Test(), kDefaultOptions() {}
@@ -219,13 +224,12 @@ class MemoryDumpManagerTest : public testing::Test {
     mdm_.reset(new MemoryDumpManager());
     MemoryDumpManager::SetInstanceForTesting(mdm_.get());
     ASSERT_EQ(mdm_.get(), MemoryDumpManager::GetInstance());
-    delegate_.reset(new MemoryDumpManagerDelegateForTesting);
   }
 
   void TearDown() override {
     MemoryDumpManager::SetInstanceForTesting(nullptr);
+    delegate_ = nullptr;
     mdm_.reset();
-    delegate_.reset();
     message_loop_.reset();
     TraceLog::DeleteForTesting();
   }
@@ -247,7 +251,8 @@ class MemoryDumpManagerTest : public testing::Test {
  protected:
   void InitializeMemoryDumpManager(bool is_coordinator) {
     mdm_->set_dumper_registrations_ignored_for_testing(true);
-    mdm_->Initialize(delegate_.get(), is_coordinator);
+    delegate_ = new MemoryDumpManagerDelegateForTesting(is_coordinator);
+    mdm_->Initialize(base::WrapUnique(delegate_));
   }
 
   void RequestGlobalDumpAndWait(MemoryDumpType dump_type,
@@ -273,20 +278,17 @@ class MemoryDumpManagerTest : public testing::Test {
   void DisableTracing() { TraceLog::GetInstance()->SetDisabled(); }
 
   bool IsPeriodicDumpingEnabled() const {
-    return mdm_->periodic_dump_timer_.IsRunning();
+    return MemoryDumpScheduler::GetInstance()
+        ->IsPeriodicTimerRunningForTesting();
   }
 
   int GetMaxConsecutiveFailuresCount() const {
     return MemoryDumpManager::kMaxConsecutiveFailuresCount;
   }
 
-  scoped_refptr<SequencedTaskRunner> GetPollingTaskRunnerUnsafe() {
-    return mdm_->dump_thread_->task_runner();
-  }
-
   const MemoryDumpProvider::Options kDefaultOptions;
   std::unique_ptr<MemoryDumpManager> mdm_;
-  std::unique_ptr<MemoryDumpManagerDelegateForTesting> delegate_;
+  MemoryDumpManagerDelegateForTesting* delegate_;
   bool last_callback_success_;
 
  private:
@@ -438,7 +440,13 @@ TEST_F(MemoryDumpManagerTest, MultipleDumpers) {
 
 // Checks that the dump provider invocations depend only on the current
 // registration state and not on previous registrations and dumps.
-TEST_F(MemoryDumpManagerTest, RegistrationConsistency) {
+// Flaky on iOS, see crbug.com/706874
+#if defined(OS_IOS)
+#define MAYBE_RegistrationConsistency DISABLED_RegistrationConsistency
+#else
+#define MAYBE_RegistrationConsistency RegistrationConsistency
+#endif
+TEST_F(MemoryDumpManagerTest, MAYBE_RegistrationConsistency) {
   InitializeMemoryDumpManager(false /* is_coordinator */);
   MockMemoryDumpProvider mdp;
 
@@ -764,46 +772,57 @@ TEST_F(MemoryDumpManagerTest, TestPollingOnDumpThread) {
   EXPECT_CALL(*mdp1, Destructor());
   EXPECT_CALL(*mdp2, Destructor());
 
+  MemoryDumpProvider::Options options;
+  options.is_fast_polling_supported = true;
+  RegisterDumpProvider(mdp1.get(), nullptr, options);
+
   RunLoop run_loop;
   scoped_refptr<SingleThreadTaskRunner> test_task_runner =
       ThreadTaskRunnerHandle::Get();
   auto quit_closure = run_loop.QuitClosure();
 
+  const int kPollsToQuit = 10;
   int call_count = 0;
+  MemoryDumpManager* mdm = mdm_.get();
+  const auto poll_function1 = [&call_count, &test_task_runner, quit_closure,
+                               &mdp2, mdm, &options, kPollsToQuit,
+                               this](uint64_t* total) -> void {
+    ++call_count;
+    if (call_count == 1)
+      RegisterDumpProvider(mdp2.get(), nullptr, options, kMDPName);
+    else if (call_count == 4)
+      mdm->UnregisterAndDeleteDumpProviderSoon(std::move(mdp2));
+    else if (call_count == kPollsToQuit)
+      test_task_runner->PostTask(FROM_HERE, quit_closure);
+
+    // Record increase of 1 GiB of memory at each call.
+    *total = static_cast<uint64_t>(call_count) * 1024 * 1024 * 1024;
+  };
   EXPECT_CALL(*mdp1, PollFastMemoryTotal(_))
-      .Times(4)
-      .WillRepeatedly(Invoke([&call_count, &test_task_runner,
-                              quit_closure](uint64_t* total) -> void {
-        ++call_count;
-        if (call_count == 4)
-          test_task_runner->PostTask(FROM_HERE, quit_closure);
-      }));
+      .Times(testing::AtLeast(kPollsToQuit))
+      .WillRepeatedly(Invoke(poll_function1));
 
   // Depending on the order of PostTask calls the mdp2 might be registered after
   // all polls or in between polls.
   EXPECT_CALL(*mdp2, PollFastMemoryTotal(_))
-      .Times(Between(0, 4))
+      .Times(Between(0, kPollsToQuit - 1))
       .WillRepeatedly(Return());
 
-  MemoryDumpProvider::Options options;
-  options.is_fast_polling_supported = true;
-  RegisterDumpProvider(mdp1.get(), nullptr, options);
+  MemoryDumpScheduler::SetPollingIntervalForTesting(1);
   EnableTracingWithTraceConfig(
-      TraceConfigMemoryTestUtil::GetTraceConfig_PeakDetectionTrigger(1));
-  scoped_refptr<SequencedTaskRunner> polling_task_runner =
-      GetPollingTaskRunnerUnsafe().get();
-  ASSERT_TRUE(polling_task_runner);
+      TraceConfigMemoryTestUtil::GetTraceConfig_PeakDetectionTrigger(3));
 
-  uint64_t value = 0;
-  for (int i = 0; i < 4; i++) {
-    if (i == 0)
-      RegisterDumpProvider(mdp2.get(), nullptr, options);
-    if (i == 2)
-      mdm_->UnregisterAndDeleteDumpProviderSoon(std::move(mdp2));
-    polling_task_runner->PostTask(
-        FROM_HERE, Bind(&MemoryDumpManagerTest::PollFastMemoryTotal,
-                        Unretained(this), &value));
-  }
+  int last_poll_to_request_dump = -2;
+  EXPECT_CALL(*delegate_, RequestGlobalMemoryDump(_, _))
+      .Times(testing::AtLeast(2))
+      .WillRepeatedly(Invoke([&last_poll_to_request_dump, &call_count](
+                                 const MemoryDumpRequestArgs& args,
+                                 const MemoryDumpCallback& callback) -> void {
+        // Minimum number of polls between dumps must be 3 (polling interval is
+        // 1ms).
+        EXPECT_GE(call_count - last_poll_to_request_dump, 3);
+        last_poll_to_request_dump = call_count;
+      }));
 
   run_loop.Run();
   DisableTracing();
@@ -889,7 +908,6 @@ TEST_F(MemoryDumpManagerTest, InitializedAfterStartOfTracing) {
   // initialization gets NACK-ed cleanly.
   {
     EXPECT_CALL(mdp, OnMemoryDump(_, _)).Times(0);
-    EXPECT_CALL(*delegate_, RequestGlobalMemoryDump(_, _)).Times(0);
     RequestGlobalDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
                              MemoryDumpLevelOfDetail::DETAILED);
     EXPECT_FALSE(last_callback_success_);
@@ -898,9 +916,9 @@ TEST_F(MemoryDumpManagerTest, InitializedAfterStartOfTracing) {
   // Now late-initialize the MemoryDumpManager and check that the
   // RequestGlobalDump completes successfully.
   {
+    InitializeMemoryDumpManager(false /* is_coordinator */);
     EXPECT_CALL(mdp, OnMemoryDump(_, _)).Times(1);
     EXPECT_CALL(*delegate_, RequestGlobalMemoryDump(_, _)).Times(1);
-    InitializeMemoryDumpManager(false /* is_coordinator */);
     RequestGlobalDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
                              MemoryDumpLevelOfDetail::DETAILED);
     EXPECT_TRUE(last_callback_success_);
@@ -1002,7 +1020,13 @@ TEST_F(MemoryDumpManagerTest, TraceConfigExpectationsWhenIsCoordinator) {
 
 // Tests against race conditions that might arise when disabling tracing in the
 // middle of a global memory dump.
-TEST_F(MemoryDumpManagerTest, DisableTracingWhileDumping) {
+// Flaky on iOS, see crbug.com/706961
+#if defined(OS_IOS)
+#define MAYBE_DisableTracingWhileDumping DISABLED_DisableTracingWhileDumping
+#else
+#define MAYBE_DisableTracingWhileDumping DisableTracingWhileDumping
+#endif
+TEST_F(MemoryDumpManagerTest, MAYBE_DisableTracingWhileDumping) {
   base::WaitableEvent tracing_disabled_event(
       WaitableEvent::ResetPolicy::AUTOMATIC,
       WaitableEvent::InitialState::NOT_SIGNALED);

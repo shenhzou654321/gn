@@ -16,6 +16,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -382,6 +383,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   // Non-Mac OSes should probably reraise the signal as well, but the Linux
   // sandbox tests break on CrOS devices.
   // https://code.google.com/p/chromium/issues/detail?id=551681
+  PrintToStderr("Calling _exit(1). Core file will not be generated.\n");
   _exit(1);
 #endif  // defined(OS_MACOSX) && !defined(OS_IOS)
 }
@@ -716,14 +718,16 @@ bool EnableInProcessStackDumping() {
   return success;
 }
 
-StackTrace::StackTrace() {
-  // NOTE: This code MUST be async-signal safe (it's used by in-process
-  // stack dumping signal handler). NO malloc or stdio is allowed here.
+StackTrace::StackTrace(size_t count) {
+// NOTE: This code MUST be async-signal safe (it's used by in-process
+// stack dumping signal handler). NO malloc or stdio is allowed here.
 
 #if !defined(__UCLIBC__)
+  count = std::min(arraysize(trace_), count);
+
   // Though the backtrace API man page does not list any possible negative
   // return values, we take no chance.
-  count_ = base::saturated_cast<size_t>(backtrace(trace_, arraysize(trace_)));
+  count_ = base::saturated_cast<size_t>(backtrace(trace_, count));
 #else
   count_ = 0;
 #endif
