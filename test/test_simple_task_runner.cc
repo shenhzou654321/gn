@@ -18,7 +18,7 @@ TestSimpleTaskRunner::~TestSimpleTaskRunner() = default;
 
 bool TestSimpleTaskRunner::PostDelayedTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     TimeDelta delay) {
   AutoLock auto_lock(lock_);
   pending_tasks_.push_back(TestPendingTask(from_here, std::move(task),
@@ -29,7 +29,7 @@ bool TestSimpleTaskRunner::PostDelayedTask(
 
 bool TestSimpleTaskRunner::PostNonNestableDelayedTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     TimeDelta delay) {
   AutoLock auto_lock(lock_);
   pending_tasks_.push_back(TestPendingTask(from_here, std::move(task),
@@ -41,7 +41,7 @@ bool TestSimpleTaskRunner::PostNonNestableDelayedTask(
 // TODO(gab): Use SequenceToken here to differentiate between tasks running in
 // the scope of this TestSimpleTaskRunner and other task runners sharing this
 // thread. http://crbug.com/631186
-bool TestSimpleTaskRunner::RunsTasksOnCurrentThread() const {
+bool TestSimpleTaskRunner::RunsTasksInCurrentSequence() const {
   return thread_ref_ == PlatformThread::CurrentRef();
 }
 
@@ -76,7 +76,7 @@ void TestSimpleTaskRunner::ClearPendingTasks() {
 }
 
 void TestSimpleTaskRunner::RunPendingTasks() {
-  DCHECK(RunsTasksOnCurrentThread());
+  DCHECK(RunsTasksInCurrentSequence());
 
   // Swap with a local variable to avoid re-entrancy problems.
   std::deque<TestPendingTask> tasks_to_run;

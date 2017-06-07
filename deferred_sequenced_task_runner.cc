@@ -34,7 +34,7 @@ DeferredSequencedTaskRunner::~DeferredSequencedTaskRunner() {
 
 bool DeferredSequencedTaskRunner::PostDelayedTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     TimeDelta delay) {
   AutoLock lock(lock_);
   if (started_) {
@@ -48,13 +48,13 @@ bool DeferredSequencedTaskRunner::PostDelayedTask(
   return true;
 }
 
-bool DeferredSequencedTaskRunner::RunsTasksOnCurrentThread() const {
-  return target_task_runner_->RunsTasksOnCurrentThread();
+bool DeferredSequencedTaskRunner::RunsTasksInCurrentSequence() const {
+  return target_task_runner_->RunsTasksInCurrentSequence();
 }
 
 bool DeferredSequencedTaskRunner::PostNonNestableDelayedTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     TimeDelta delay) {
   AutoLock lock(lock_);
   if (started_) {
@@ -69,10 +69,12 @@ bool DeferredSequencedTaskRunner::PostNonNestableDelayedTask(
 
 void DeferredSequencedTaskRunner::QueueDeferredTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     TimeDelta delay,
     bool is_non_nestable) {
-  DCHECK(task);
+  // Use CHECK instead of DCHECK to crash earlier. See http://crbug.com/711167
+  // for details.
+  CHECK(task);
 
   DeferredTask deferred_task;
   deferred_task.posted_from = from_here;

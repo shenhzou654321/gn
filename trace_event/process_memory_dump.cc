@@ -12,6 +12,7 @@
 #include "base/process/process_metrics.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/heap_profiler_heap_dump_writer.h"
+#include "base/trace_event/heap_profiler_serialization_state.h"
 #include "base/trace_event/memory_infra_background_whitelist.h"
 #include "base/trace_event/process_memory_totals.h"
 #include "base/trace_event/trace_event_argument.h"
@@ -117,13 +118,22 @@ size_t ProcessMemoryDump::CountResidentBytes(void* start_address,
 
     for (size_t i = 0; i < page_count; i++)
       resident_page_count += vec[i].VirtualAttributes.Valid;
+#elif defined(OS_FUCHSIA)
+    // TODO(fuchsia): Port, see https://crbug.com/706592.
+    ALLOW_UNUSED_LOCAL(chunk_start);
+    ALLOW_UNUSED_LOCAL(page_count);
 #elif defined(OS_POSIX)
     int error_counter = 0;
     int result = 0;
     // HANDLE_EINTR tries for 100 times. So following the same pattern.
     do {
       result =
+#if defined(OS_AIX)
+          mincore(reinterpret_cast<char*>(chunk_start), chunk_size,
+                  reinterpret_cast<char*>(vec.get()));
+#else
           mincore(reinterpret_cast<void*>(chunk_start), chunk_size, vec.get());
+#endif
     } while (result == -1 && errno == EAGAIN && error_counter++ < 100);
     failure = !!result;
 
@@ -148,11 +158,13 @@ size_t ProcessMemoryDump::CountResidentBytes(void* start_address,
 #endif  // defined(COUNT_RESIDENT_BYTES_SUPPORTED)
 
 ProcessMemoryDump::ProcessMemoryDump(
-    scoped_refptr<MemoryDumpSessionState> session_state,
+    scoped_refptr<HeapProfilerSerializationState>
+        heap_profiler_serialization_state,
     const MemoryDumpArgs& dump_args)
     : has_process_totals_(false),
       has_process_mmaps_(false),
-      session_state_(std::move(session_state)),
+      heap_profiler_serialization_state_(
+          std::move(heap_profiler_serialization_state)),
       dump_args_(dump_args) {}
 
 ProcessMemoryDump::~ProcessMemoryDump() {}
@@ -241,14 +253,22 @@ MemoryAllocatorDump* ProcessMemoryDump::GetSharedGlobalAllocatorDump(
 }
 
 void ProcessMemoryDump::DumpHeapUsage(
-    const base::hash_map<base::trace_event::AllocationContext,
-        base::trace_event::AllocationMetrics>& metrics_by_context,
+    const std::unordered_map<base::trace_event::AllocationContext,
+                             base::trace_event::AllocationMetrics>&
+        metrics_by_context,
     base::trace_event::TraceEventMemoryOverhead& overhead,
     const char* allocator_name) {
   if (!metrics_by_context.empty()) {
+    // We shouldn't end up here unless we're doing a detailed dump with
+    // heap profiling enabled and if that is the case tracing should be
+    // enabled which sets up the heap profiler serialization state.
+    if (!heap_profiler_serialization_state()) {
+      NOTREACHED();
+      return;
+    }
     DCHECK_EQ(0ul, heap_dumps_.count(allocator_name));
     std::unique_ptr<TracedValue> heap_dump = ExportHeapDump(
-        metrics_by_context, *session_state());
+        metrics_by_context, *heap_profiler_serialization_state());
     heap_dumps_[allocator_name] = std::move(heap_dump);
   }
 
@@ -283,8 +303,7 @@ void ProcessMemoryDump::TakeAllDumpsFrom(ProcessMemoryDump* other) {
   other->allocator_dumps_.clear();
 
   // Move all the edges.
-  allocator_dumps_edges_.insert(allocator_dumps_edges_.end(),
-                                other->allocator_dumps_edges_.begin(),
+  allocator_dumps_edges_.insert(other->allocator_dumps_edges_.begin(),
                                 other->allocator_dumps_edges_.end());
   other->allocator_dumps_edges_.clear();
 
@@ -323,7 +342,8 @@ void ProcessMemoryDump::AsValueInto(TracedValue* value) const {
   }
 
   value->BeginArray("allocators_graph");
-  for (const MemoryAllocatorDumpEdge& edge : allocator_dumps_edges_) {
+  for (const auto& it : allocator_dumps_edges_) {
+    const MemoryAllocatorDumpEdge& edge = it.second;
     value->BeginDictionary();
     value->SetString("source", edge.source.ToString());
     value->SetString("target", edge.target.ToString());
@@ -337,14 +357,31 @@ void ProcessMemoryDump::AsValueInto(TracedValue* value) const {
 void ProcessMemoryDump::AddOwnershipEdge(const MemoryAllocatorDumpGuid& source,
                                          const MemoryAllocatorDumpGuid& target,
                                          int importance) {
-  allocator_dumps_edges_.push_back(
-      {source, target, importance, kEdgeTypeOwnership});
+  DCHECK(allocator_dumps_edges_.count(source) == 0 ||
+         allocator_dumps_edges_[source].overridable);
+  allocator_dumps_edges_[source] = {
+      source, target, importance, kEdgeTypeOwnership, false /* overridable */};
 }
 
 void ProcessMemoryDump::AddOwnershipEdge(
     const MemoryAllocatorDumpGuid& source,
     const MemoryAllocatorDumpGuid& target) {
   AddOwnershipEdge(source, target, 0 /* importance */);
+}
+
+void ProcessMemoryDump::AddOverridableOwnershipEdge(
+    const MemoryAllocatorDumpGuid& source,
+    const MemoryAllocatorDumpGuid& target,
+    int importance) {
+  if (allocator_dumps_edges_.count(source) == 0) {
+    allocator_dumps_edges_[source] = {
+        source, target, importance, kEdgeTypeOwnership, true /* overridable */};
+  } else {
+    // An edge between the source and target already exits. So, do nothing here
+    // since the new overridable edge is implicitly overridden by a strong edge
+    // which was created earlier.
+    DCHECK(!allocator_dumps_edges_[source].overridable);
+  }
 }
 
 void ProcessMemoryDump::AddSuballocation(const MemoryAllocatorDumpGuid& source,

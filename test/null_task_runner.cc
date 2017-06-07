@@ -11,19 +11,19 @@ NullTaskRunner::NullTaskRunner() {}
 NullTaskRunner::~NullTaskRunner() {}
 
 bool NullTaskRunner::PostDelayedTask(const tracked_objects::Location& from_here,
-                                     Closure task,
+                                     OnceClosure task,
                                      base::TimeDelta delay) {
   return false;
 }
 
 bool NullTaskRunner::PostNonNestableDelayedTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     base::TimeDelta delay) {
   return false;
 }
 
-bool NullTaskRunner::RunsTasksOnCurrentThread() const {
+bool NullTaskRunner::RunsTasksInCurrentSequence() const {
   return true;
 }
 

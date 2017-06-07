@@ -5,82 +5,51 @@
 #ifndef BASE_CONTAINERS_FLAT_SET_H_
 #define BASE_CONTAINERS_FLAT_SET_H_
 
+#include <functional>
+
 #include "base/containers/flat_tree.h"
 
 namespace base {
 
-// Overview:
-// This file implements flat_set container. It is an alternative to standard
-// sorted containers that stores it's elements in contiguous memory (current
-// version uses sorted std::vector).
-// Discussion that preceded introduction of this container can be found here:
-// https://groups.google.com/a/chromium.org/forum/#!searchin/chromium-dev/vector$20based/chromium-dev/4uQMma9vj9w/HaQ-WvMOAwAJ
+// flat_set is a container with a std::set-like interface that stores its
+// contents in a sorted vector.
 //
-// Motivation:
-// Contiguous memory is very beneficial to iteration and copy speed at the cost
-// of worse algorithmic complexity of insertion/erasure operations. They can
-// be very fast for set operations and for small number of elements.
+// Please see //base/containers/README.md for an overview of which container
+// to select.
 //
-// Usage guidance:
-// Prefer base::flat_set for:
-//  * Very small sets, something that is an easy fit for cache. Consider
-//    "very small" to be under a 100 32bit integers.
-//  * Sets that are built once (using flat_set::flat_set(first, last)). Consider
-//    collecting all data in a vector and then building flat_set out of it.
-//    TODO(dyaroshev): improve the interface to better support this pattern
-//    (crbug.com/682254).
-//  * Sets where mutating happens in big bulks: to erase multiple elements, use
-//    base::EraseIf() rather than repeated single-element removal. Insertion is
-//    harder - consider set operations or building a new vector. Set operations
-//    can be slow if one of the sets is considerably bigger. Also be aware that
-//    beating performance of sort + unique (implementation of flat_set's
-//    constructor) is hard, clever merge of many sets might not win. Generally
-//    avoid inserting into flat set without benchmarks.
-//  * Copying and iterating.
-//  * Set operations (union/intersect etc).
+// PROS
 //
-// Prefer to build a new flat_set from a std::vector (or similar) instead of
-// calling insert() repeatedly, which would have O(size^2) complexity.
+//  - Good memory locality.
+//  - Low overhead, especially for smaller sets.
+//  - Performance is good for more workloads than you might expect (see
+//    overview link above).
 //
-// TODO(dyaroshev): develop standalone benchmarks to find performance boundaries
-// for different types of sets crbug.com/682215.
+// CONS
 //
-// If you do write a benchmark that significantly depends on using sets please
-// share your results at:
-// https://groups.google.com/a/chromium.org/forum/#!searchin/chromium-dev/vector$20based/chromium-dev/4uQMma9vj9w/HaQ-WvMOAwAJ
+//  - Inserts and removals are O(n).
 //
-// Important usability aspects:
-//   * flat_set implements std::set interface from C++11 where possible. It
-//     also has reserve(), capacity() and shrink_to_fit() from std::vector.
-//   * iteration invalidation rules differ:
-//     - all cases of std::vector::iterator invalidation also apply.
-//     - we ask (for now) to assume that move operations invalidate iterators.
-//       TODO(dyaroshev): Research the possibility of using a small buffer
-//       optimization crbug.com/682240.
-//   * Constructor sorts elements in a non-stable manner (unlike std::set). So
-//     among equivalent (with respect to provided compare) elements passed to
-//     the constructor it is unspecified with one will end up in the set.
-//     However insert()/emplace() methods are stable with respect to already
-//     inserted elements - an element that is already in the set will not be
-//     replaced.
-//   * allocator support is not implemented.
-//   * insert(first, last) and insert(std::initializer_list) are not
-//     implemented (see Notes section).
+// IMPORTANT NOTES
 //
-// Notes:
-// Current implementation is based on boost::containers::flat_set,
-// eastl::vector_set and folly::sorted_vector. All of these implementations do
-// insert(first, last) as insertion one by one (some implementations with hints
-// and/or reserve). Boost documentation claims this algorithm to be O(n*log(n))
-// but it seems to be a quadratic algorithm. For now we do not implement this
-// method.
-// TODO(dyaroshev): research an algorithm for range insertion crbug.com/682249.
-
+//  - Iterators are invalidated across mutations.
+//  - If possible, construct a flat_set in one operation by inserting into
+//    a std::vector and moving that vector into the flat_set constructor.
+//  - For multiple removals use base::EraseIf() which is O(n) rather than
+//    O(n * removed_items).
+//
 // QUICK REFERENCE
 //
 // Most of the core functionality is inherited from flat_tree. Please see
 // flat_tree.h for more details for most of these functions. As a quick
 // reference, the functions available are:
+//
+// Constructors (inputs need not be sorted):
+//   flat_set(InputIterator first, InputIterator last,
+//            FlatContainerDupes, const Compare& compare = Compare());
+//   flat_set(const flat_set&);
+//   flat_set(flat_set&&);
+//   flat_set(std::vector<Key>, FlatContainerDupes);  // Re-use storage.
+//   flat_set(std::initializer_list<value_type> ilist, FlatContainerDupes,
+//            const Compare& comp = Compare());
 //
 // Assignment functions:
 //   flat_set& operator=(const flat_set&);
@@ -115,6 +84,8 @@ namespace base {
 // Insert and accessor functions:
 //   pair<iterator, bool> insert(const Key&);
 //   pair<iterator, bool> insert(Key&&);
+//   void                 insert(InputIterator first, InputIterator last,
+//                               FlatContainerDupes);
 //   pair<iterator, bool> emplace(Args&&...);
 //   iterator             emplace_hint(const_iterator, Args&&...);
 //
@@ -137,7 +108,7 @@ namespace base {
 //   iterator                 upper_bound(const Key&);
 //   const_iterator           upper_bound(const Key&) const;
 //
-// General functions
+// General functions:
 //   void swap(flat_set&&)
 //
 // Non-member operators:

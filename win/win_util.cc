@@ -10,6 +10,7 @@
 #include <shobjidl.h>  // Must be before propkey.
 #include <initguid.h>
 #include <mdmregistration.h>
+#include <objbase.h>
 #include <propkey.h>
 #include <propvarutil.h>
 #include <psapi.h>

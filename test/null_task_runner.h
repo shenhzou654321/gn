@@ -20,13 +20,13 @@ class NullTaskRunner : public base::SingleThreadTaskRunner {
   NullTaskRunner();
 
   bool PostDelayedTask(const tracked_objects::Location& from_here,
-                       base::Closure task,
+                       base::OnceClosure task,
                        base::TimeDelta delay) override;
   bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
-                                  base::Closure task,
+                                  base::OnceClosure task,
                                   base::TimeDelta delay) override;
   // Always returns true to avoid triggering DCHECKs.
-  bool RunsTasksOnCurrentThread() const override;
+  bool RunsTasksInCurrentSequence() const override;
 
  protected:
   ~NullTaskRunner() override;

@@ -6,14 +6,19 @@
 
 #include "base/allocator/partition_allocator/page_allocator.h"
 #include "base/allocator/partition_allocator/spin_lock.h"
-#include "base/win/windows_version.h"
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
+#include "base/win/windows_version.h"
 #else
 #include <sys/time.h>
 #include <unistd.h>
+#endif
+
+// VersionHelpers.h must be included after windows.h.
+#if defined(OS_WIN)
+#include <VersionHelpers.h>
 #endif
 
 namespace base {
@@ -92,7 +97,13 @@ void* GetRandomPageBase() {
 #if defined(OS_WIN)
   random &= 0x3ffffffffffUL;
   // Windows >= 8.1 has the full 47 bits. Use them where available.
-  if (base::win::GetVersion() < base::win::Version::VERSION_WIN8_1) {
+  static bool windows_81 = false;
+  static bool windows_81_initialized = false;
+  if (!windows_81_initialized) {
+    windows_81 = IsWindows8Point1OrGreater();
+    windows_81_initialized = true;
+  }
+  if (!windows_81) {
     random += 0x10000000000UL;
   }
 #elif defined(MEMORY_TOOL_REPLACES_ALLOCATOR)

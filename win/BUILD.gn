@@ -35,3 +35,10 @@ message_compiler("eventlog_messages") {
   user_mode_logging = false
   compile_generated_code = false
 }
+
+static_library("pe_image") {
+  sources = [
+    "pe_image.cc",
+    "pe_image.h",
+  ]
+}

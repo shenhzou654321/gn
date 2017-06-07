@@ -26,7 +26,7 @@ void MessageLoopTaskRunner::BindToCurrentThread() {
 
 bool MessageLoopTaskRunner::PostDelayedTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     base::TimeDelta delay) {
   DCHECK(!task.is_null()) << from_here.ToString();
   return incoming_queue_->AddToIncomingQueue(from_here, std::move(task), delay,
@@ -35,14 +35,14 @@ bool MessageLoopTaskRunner::PostDelayedTask(
 
 bool MessageLoopTaskRunner::PostNonNestableDelayedTask(
     const tracked_objects::Location& from_here,
-    Closure task,
+    OnceClosure task,
     base::TimeDelta delay) {
   DCHECK(!task.is_null()) << from_here.ToString();
   return incoming_queue_->AddToIncomingQueue(from_here, std::move(task), delay,
                                              false);
 }
 
-bool MessageLoopTaskRunner::RunsTasksOnCurrentThread() const {
+bool MessageLoopTaskRunner::RunsTasksInCurrentSequence() const {
   AutoLock lock(valid_thread_id_lock_);
   return valid_thread_id_ == PlatformThread::CurrentId();
 }

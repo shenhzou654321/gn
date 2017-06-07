@@ -12,17 +12,6 @@
 
 #include "build/build_config.h"
 
-// This hacks around libstdc++ 4.6 missing stuff in type_traits, while we need
-// to support it.
-#define CR_GLIBCXX_4_7_0 20120322
-#define CR_GLIBCXX_4_5_4 20120702
-#define CR_GLIBCXX_4_6_4 20121127
-#if defined(__GLIBCXX__) &&                                               \
-    (__GLIBCXX__ < CR_GLIBCXX_4_7_0 || __GLIBCXX__ == CR_GLIBCXX_4_5_4 || \
-     __GLIBCXX__ == CR_GLIBCXX_4_6_4)
-#define CR_USE_FALLBACKS_FOR_OLD_GLIBCXX
-#endif
-
 // Some versions of libstdc++ have partial support for type_traits, but misses
 // a smaller subset while removing some of the older non-standard stuff. Assume
 // that all versions below 5.0 fall in this category, along with one 5.0
@@ -64,33 +53,10 @@ struct SupportsOstreamOperator<T,
 
 }  // namespace internal
 
-// underlying_type produces the integer type backing an enum type.
-// TODO(crbug.com/554293): Remove this when all platforms have this in the std
-// namespace.
-#if defined(CR_USE_FALLBACKS_FOR_OLD_GLIBCXX)
-template <typename T>
-struct underlying_type {
-  using type = __underlying_type(T);
-};
-#else
-template <typename T>
-using underlying_type = std::underlying_type<T>;
-#endif
-
-// TODO(crbug.com/554293): Remove this when all platforms have this in the std
-// namespace.
-#if defined(CR_USE_FALLBACKS_FOR_OLD_GLIBCXX)
-template <class T>
-using is_trivially_destructible = std::has_trivial_destructor<T>;
-#else
-template <class T>
-using is_trivially_destructible = std::is_trivially_destructible<T>;
-#endif
-
 // is_trivially_copyable is especially hard to get right.
 // - Older versions of libstdc++ will fail to have it like they do for other
-//   type traits. In this case we should provide it based on compiler
-//   intrinsics. This is covered by the CR_USE_FALLBACKS_FOR_OLD_GLIBCXX define.
+//   type traits. This has become a subset of the second point, but used to be
+//   handled independently.
 // - An experimental release of gcc includes most of type_traits but misses
 //   is_trivially_copyable, so we still have to avoid using libstdc++ in this
 //   case, which is covered by CR_USE_FALLBACKS_FOR_OLD_EXPERIMENTAL_GLIBCXX.
@@ -111,8 +77,7 @@ using is_trivially_destructible = std::is_trivially_destructible<T>;
 
 // TODO(crbug.com/554293): Remove this when all platforms have this in the std
 // namespace and it works with gcc as needed.
-#if defined(CR_USE_FALLBACKS_FOR_OLD_GLIBCXX) ||              \
-    defined(CR_USE_FALLBACKS_FOR_OLD_EXPERIMENTAL_GLIBCXX) || \
+#if defined(CR_USE_FALLBACKS_FOR_OLD_EXPERIMENTAL_GLIBCXX) || \
     defined(CR_USE_FALLBACKS_FOR_GCC_WITH_LIBCXX)
 template <typename T>
 struct is_trivially_copyable {
@@ -132,7 +97,6 @@ using is_trivially_copyable = std::is_trivially_copyable<T>;
 
 }  // namespace base
 
-#undef CR_USE_FALLBACKS_FOR_OLD_GLIBCXX
 #undef CR_USE_FALLBACKS_FOR_GCC_WITH_LIBCXX
 #undef CR_USE_FALLBACKS_FOR_OLD_EXPERIMENTAL_GLIBCXX
 

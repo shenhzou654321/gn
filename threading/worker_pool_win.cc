@@ -45,7 +45,9 @@ DWORD CALLBACK WorkItemCallback(void* param) {
 
 // Takes ownership of |pending_task|
 bool PostTaskInternal(PendingTask* pending_task, bool task_is_slow) {
-  DCHECK(pending_task->task);
+  // Use CHECK instead of DCHECK to crash earlier. See http://crbug.com/711167
+  // for details.
+  CHECK(pending_task->task);
 
   ULONG flags = 0;
   if (task_is_slow)
@@ -64,7 +66,7 @@ bool PostTaskInternal(PendingTask* pending_task, bool task_is_slow) {
 
 // static
 bool WorkerPool::PostTask(const tracked_objects::Location& from_here,
-                          base::Closure task,
+                          base::OnceClosure task,
                           bool task_is_slow) {
   PendingTask* pending_task = new PendingTask(from_here, std::move(task));
   return PostTaskInternal(pending_task, task_is_slow);

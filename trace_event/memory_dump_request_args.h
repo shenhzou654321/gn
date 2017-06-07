@@ -14,25 +14,28 @@
 
 #include "base/base_export.h"
 #include "base/callback.h"
+#include "base/optional.h"
 #include "base/process/process_handle.h"
+#include "base/trace_event/process_memory_totals.h"
 
 namespace base {
 namespace trace_event {
 
 // Captures the reason why a memory dump is being requested. This is to allow
-// selective enabling of dumps, filtering and post-processing. Important: this
-// must be kept consistent with
-// services/resource_coordinator/public/cpp/memory/memory_infra_traits.cc.
+// selective enabling of dumps, filtering and post-processing. Keep this
+// consistent with memory_instrumentation.mojo and
+// memory_instrumentation_struct_traits.{h,cc}
 enum class MemoryDumpType {
   PERIODIC_INTERVAL,     // Dumping memory at periodic intervals.
   EXPLICITLY_TRIGGERED,  // Non maskable dump request.
   PEAK_MEMORY_USAGE,     // Dumping memory at detected peak total memory usage.
-  LAST = PEAK_MEMORY_USAGE  // For IPC macros.
+  SUMMARY_ONLY,          // Calculate just the summary & don't add to the trace.
+  LAST = SUMMARY_ONLY
 };
 
 // Tells the MemoryDumpProvider(s) how much detailed their dumps should be.
-// Important: this must be kept consistent with
-// services/resource_Coordinator/public/cpp/memory/memory_infra_traits.cc.
+// Keep this consistent with memory_instrumentation.mojo and
+// memory_instrumentation_struct_traits.{h,cc}
 enum class MemoryDumpLevelOfDetail : uint32_t {
   FIRST,
 
@@ -55,8 +58,8 @@ enum class MemoryDumpLevelOfDetail : uint32_t {
 };
 
 // Initial request arguments for a global memory dump. (see
-// MemoryDumpManager::RequestGlobalMemoryDump()). Important: this must be kept
-// consistent with services/memory_infra/public/cpp/memory_infra_traits.cc.
+// MemoryDumpManager::RequestGlobalMemoryDump()). Keep this consistent with
+// memory_instrumentation.mojo and memory_instrumentation_struct_traits.{h,cc}
 struct BASE_EXPORT MemoryDumpRequestArgs {
   // Globally unique identifier. In multi-process dumps, all processes issue a
   // local dump with the same guid. This allows the trace importers to
@@ -78,9 +81,10 @@ struct MemoryDumpArgs {
 // Summarises information about memory use as seen by a single process.
 // This information will eventually be passed to a service to be colated
 // and reported.
-struct MemoryDumpCallbackResult {
+struct BASE_EXPORT MemoryDumpCallbackResult {
   struct OSMemDump {
     uint32_t resident_set_kb = 0;
+    ProcessMemoryTotals::PlatformPrivateFootprint platform_private_footprint;
   };
   struct ChromeMemDump {
     uint32_t malloc_total_kb = 0;
@@ -98,10 +102,17 @@ struct MemoryDumpCallbackResult {
   std::map<ProcessId, OSMemDump> extra_processes_dump;
 
   MemoryDumpCallbackResult();
+  MemoryDumpCallbackResult(const MemoryDumpCallbackResult&);
   ~MemoryDumpCallbackResult();
 };
 
-using MemoryDumpCallback = Callback<void(uint64_t dump_guid, bool success)>;
+using GlobalMemoryDumpCallback =
+    Callback<void(uint64_t dump_guid, bool success)>;
+
+using ProcessMemoryDumpCallback =
+    Callback<void(uint64_t dump_guid,
+                  bool success,
+                  const Optional<MemoryDumpCallbackResult>& result)>;
 
 BASE_EXPORT const char* MemoryDumpTypeToString(const MemoryDumpType& dump_type);
 

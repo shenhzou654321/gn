@@ -29,7 +29,7 @@ class PostTaskAndReplyTaskRunner : public internal::PostTaskAndReplyImpl {
 
  private:
   bool PostTask(const tracked_objects::Location& from_here,
-                Closure task) override {
+                OnceClosure task) override {
     return destination_->PostTask(from_here, std::move(task));
   }
 
@@ -78,9 +78,9 @@ TEST(PostTaskAndReplyImplTest, PostTaskAndReply) {
       PostTaskAndReplyTaskRunner(post_runner.get())
           .PostTaskAndReply(
               FROM_HERE,
-              Bind(&MockObject::Task, Unretained(&mock_object),
-                   make_scoped_refptr(new ObjectToDelete(&delete_flag))),
-              Bind(&MockObject::Reply, Unretained(&mock_object))));
+              BindOnce(&MockObject::Task, Unretained(&mock_object),
+                       make_scoped_refptr(new ObjectToDelete(&delete_flag))),
+              BindOnce(&MockObject::Reply, Unretained(&mock_object))));
 
   // Expect the task to be posted to |post_runner|.
   EXPECT_TRUE(post_runner->HasPendingTask());

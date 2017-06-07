@@ -6,10 +6,54 @@
 #define BASE_CONTAINERS_FLAT_TREE_H_
 
 #include <algorithm>
+#include <iterator>
 #include <vector>
 
 namespace base {
+
+enum FlatContainerDupes {
+  KEEP_FIRST_OF_DUPES,
+  KEEP_LAST_OF_DUPES,
+};
+
 namespace internal {
+
+// This is a convenience method returning true if Iterator is at least a
+// ForwardIterator and thus supports multiple passes over a range.
+template <class Iterator>
+constexpr bool is_multipass() {
+  return std::is_base_of<
+      std::forward_iterator_tag,
+      typename std::iterator_traits<Iterator>::iterator_category>::value;
+}
+
+// This algorithm is like unique() from the standard library except it
+// selects only the last of consecutive values instead of the first.
+template <class Iterator, class BinaryPredicate>
+Iterator LastUnique(Iterator first, Iterator last, BinaryPredicate compare) {
+  Iterator replacable = std::adjacent_find(first, last, compare);
+
+  // No duplicate elements found.
+  if (replacable == last)
+    return last;
+
+  first = std::next(replacable);
+
+  // Last element is a duplicate but all others are unique.
+  if (first == last)
+    return replacable;
+
+  // This loop is based on std::adjacent_find but std::adjacent_find doesn't
+  // quite cut it.
+  for (Iterator next = std::next(first); next != last; ++next, ++first) {
+    if (!compare(*first, *next))
+      *replacable++ = std::move(*first);
+  }
+
+  // Last element should be copied unconditionally.
+  *replacable++ = std::move(*first);
+  return replacable;
+}
 
 // Implementation of a sorted vector for backing flat_set and flat_map. Do not
 // use directly.
@@ -24,7 +68,6 @@ namespace internal {
 //   const Key& operator()(const Value&).
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
 class flat_tree {
- public:
  private:
   using underlying_type = std::vector<Value>;
 
@@ -71,21 +114,28 @@ class flat_tree {
   // length).
   //
   // Assume that move constructors invalidate iterators and references.
+  //
+  // The constructors that take ranges, lists, and vectors do not require that
+  // the input be sorted.
 
   flat_tree();
   explicit flat_tree(const key_compare& comp);
 
-  // Not stable in the presence of duplicates in the initializer list.
   template <class InputIterator>
   flat_tree(InputIterator first,
             InputIterator last,
+            FlatContainerDupes dupe_handling,
             const key_compare& comp = key_compare());
 
   flat_tree(const flat_tree&);
   flat_tree(flat_tree&&);
 
-  // Not stable in the presence of duplicates in the initializer list.
+  flat_tree(std::vector<value_type> items,
+            FlatContainerDupes dupe_handling,
+            const key_compare& comp = key_compare());
+
   flat_tree(std::initializer_list<value_type> ilist,
+            FlatContainerDupes dupe_handling,
             const key_compare& comp = key_compare());
 
   ~flat_tree();
@@ -97,7 +147,7 @@ class flat_tree {
 
   flat_tree& operator=(const flat_tree&);
   flat_tree& operator=(flat_tree&&);
-  // Not stable in the presence of duplicates in the initializer list.
+  // Takes the first if there are duplicates in the initializer list.
   flat_tree& operator=(std::initializer_list<value_type> ilist);
 
   // --------------------------------------------------------------------------
@@ -147,9 +197,8 @@ class flat_tree {
   // Insert operations.
   //
   // Assume that every operation invalidates iterators and references.
-  // Insertion of one element can take O(size). See the Notes section in the
-  // class comments on why we do not currently implement range insertion.
-  // Capacity of flat_tree grows in an implementation-defined manner.
+  // Insertion of one element can take O(size). Capacity of flat_tree grows in
+  // an implementation-defined manner.
   //
   // NOTE: Prefer to build a new flat_tree from a std::vector (or similar)
   // instead of calling insert() repeatedly.
@@ -159,6 +208,14 @@ class flat_tree {
 
   iterator insert(const_iterator position_hint, const value_type& x);
   iterator insert(const_iterator position_hint, value_type&& x);
+
+  // This method inserts the values from the range [first, last) into the
+  // current tree. In case of KEEP_LAST_OF_DUPES newly added elements can
+  // overwrite existing values.
+  template <class InputIterator>
+  void insert(InputIterator first,
+              InputIterator last,
+              FlatContainerDupes dupes);
 
   template <class... Args>
   std::pair<iterator, bool> emplace(Args&&... args);
@@ -276,17 +333,89 @@ class flat_tree {
     return std::next(begin(), distance);
   }
 
-  void sort_and_unique() {
-    // std::set sorts elements preserving stability because it doesn't have any
-    // performance wins in not doing that. We do, so we use an unstable sort.
-    std::sort(begin(), end(), impl_.get_value_comp());
-    erase(std::unique(begin(), end(),
-                      [this](const value_type& lhs, const value_type& rhs) {
-                        // lhs is already <= rhs due to sort, therefore
-                        // !(lhs < rhs) <=> lhs == rhs.
-                        return !impl_.get_value_comp()(lhs, rhs);
-                      }),
-          end());
+  // This method is inspired by both std::map::insert(P&&) and
+  // std::map::insert_or_assign(const K&, V&&). It inserts val if an equivalent
+  // element is not present yet, otherwise it overwrites. It returns an iterator
+  // to the modified element and a flag indicating whether insertion or
+  // assignment happened.
+  template <class V>
+  std::pair<iterator, bool> insert_or_assign(V&& val) {
+    auto position = lower_bound(GetKeyFromValue()(val));
+
+    if (position == end() || value_comp()(val, *position))
+      return {impl_.body_.emplace(position, std::forward<V>(val)), true};
+
+    *position = std::forward<V>(val);
+    return {position, false};
+  }
+
+  // This method is similar to insert_or_assign, with the following differences:
+  // - Instead of searching [begin(), end()) it only searches [first, last).
+  // - In case no equivalent element is found, val is appended to the end of the
+  //   underlying body and an iterator to the next bigger element in [first,
+  //   last) is returned.
+  template <class V>
+  std::pair<iterator, bool> append_or_assign(iterator first,
+                                             iterator last,
+                                             V&& val) {
+    auto position = std::lower_bound(first, last, val, value_comp());
+
+    if (position == last || value_comp()(val, *position)) {
+      // emplace_back might invalidate position, which is why distance needs to
+      // be cached.
+      const difference_type distance = std::distance(begin(), position);
+      impl_.body_.emplace_back(std::forward<V>(val));
+      return {std::next(begin(), distance), true};
+    }
+
+    *position = std::forward<V>(val);
+    return {position, false};
+  }
+
+  // This method is similar to insert, with the following differences:
+  // - Instead of searching [begin(), end()) it only searches [first, last).
+  // - In case no equivalent element is found, val is appended to the end of the
+  //   underlying body and an iterator to the next bigger element in [first,
+  //   last) is returned.
+  template <class V>
+  std::pair<iterator, bool> append_unique(iterator first,
+                                          iterator last,
+                                          V&& val) {
+    auto position = std::lower_bound(first, last, val, value_comp());
+
+    if (position == last || value_comp()(val, *position)) {
+      // emplace_back might invalidate position, which is why distance needs to
+      // be cached.
+      const difference_type distance = std::distance(begin(), position);
+      impl_.body_.emplace_back(std::forward<V>(val));
+      return {std::next(begin(), distance), true};
+    }
+
+    return {position, false};
+  }
+
+  void sort_and_unique(iterator first,
+                       iterator last,
+                       FlatContainerDupes dupes) {
+    // Preserve stability for the unique code below.
+    std::stable_sort(first, last, impl_.get_value_comp());
+
+    auto comparator = [this](const value_type& lhs, const value_type& rhs) {
+      // lhs is already <= rhs due to sort, therefore
+      // !(lhs < rhs) <=> lhs == rhs.
+      return !impl_.get_value_comp()(lhs, rhs);
+    };
+
+    iterator erase_after;
+    switch (dupes) {
+      case KEEP_FIRST_OF_DUPES:
+        erase_after = std::unique(first, last, comparator);
+        break;
+      case KEEP_LAST_OF_DUPES:
+        erase_after = LastUnique(first, last, comparator);
+        break;
+    }
+    erase(erase_after, last);
   }
 
   // To support comparators that may not be possible to default-construct, we
@@ -325,9 +454,10 @@ template <class InputIterator>
 flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::flat_tree(
     InputIterator first,
     InputIterator last,
+    FlatContainerDupes dupe_handling,
     const KeyCompare& comp)
     : impl_(comp, first, last) {
-  sort_and_unique();
+  sort_and_unique(begin(), end(), dupe_handling);
 }
 
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
@@ -340,9 +470,19 @@ flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::flat_tree(flat_tree&&) =
 
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
 flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::flat_tree(
-    std::initializer_list<value_type> ilist,
+    std::vector<value_type> items,
+    FlatContainerDupes dupe_handling,
     const KeyCompare& comp)
-    : flat_tree(std::begin(ilist), std::end(ilist), comp) {}
+    : impl_(comp, std::move(items)) {
+  sort_and_unique(begin(), end(), dupe_handling);
+}
+
+template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
+flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::flat_tree(
+    std::initializer_list<value_type> ilist,
+    FlatContainerDupes dupe_handling,
+    const KeyCompare& comp)
+    : flat_tree(std::begin(ilist), std::end(ilist), dupe_handling, comp) {}
 
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
 flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::~flat_tree() = default;
@@ -362,7 +502,7 @@ template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
 auto flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::operator=(
     std::initializer_list<value_type> ilist) -> flat_tree& {
   impl_.body_ = ilist;
-  sort_and_unique();
+  sort_and_unique(begin(), end(), KEEP_FIRST_OF_DUPES);
   return *this;
 }
 
@@ -496,7 +636,8 @@ auto flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::crend() const
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
 auto flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::insert(
     const value_type& val) -> std::pair<iterator, bool> {
-  auto position = lower_bound(val);
+  GetKeyFromValue extractor;
+  auto position = lower_bound(extractor(val));
 
   if (position == end() || impl_.get_value_comp()(val, *position))
     return {impl_.body_.insert(position, val), true};
@@ -540,6 +681,70 @@ auto flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::insert(
       return impl_.body_.insert(const_cast_it(position_hint), std::move(val));
   }
   return insert(std::move(val)).first;
+}
+
+template <class Key, class Value, class GetKeyFromValue, class KeyCompare>
+template <class InputIterator>
+void flat_tree<Key, Value, GetKeyFromValue, KeyCompare>::insert(
+    InputIterator first,
+    InputIterator last,
+    FlatContainerDupes dupes) {
+  if (first == last)
+    return;
+
+  // Cache results whether existing elements should be overwritten and whether
+  // inserting new elements happens immediately or will be done in a batch.
+  const bool overwrite_existing = dupes == KEEP_LAST_OF_DUPES;
+  const bool insert_inplace =
+      is_multipass<InputIterator>() && std::next(first) == last;
+
+  if (insert_inplace) {
+    if (overwrite_existing) {
+      for (; first != last; ++first)
+        insert_or_assign(*first);
+    } else
+      std::copy(first, last, std::inserter(*this, end()));
+    return;
+  }
+
+  // Provide a convenience lambda to obtain an iterator pointing past the last
+  // old element. This needs to be dymanic due to possible re-allocations.
+  const size_type original_size = size();
+  auto middle = [this, original_size]() {
+    return std::next(begin(), original_size);
+  };
+
+  // For batch updates initialize the first insertion point.
+  difference_type pos_first_new = original_size;
+
+  // Loop over the input range while appending new values and overwriting
+  // existing ones, if applicable. Keep track of the first insertion point.
+  if (overwrite_existing) {
+    for (; first != last; ++first) {
+      std::pair<iterator, bool> result =
+          append_or_assign(begin(), middle(), *first);
+      if (result.second) {
+        pos_first_new =
+            std::min(pos_first_new, std::distance(begin(), result.first));
+      }
+    }
+  } else {
+    for (; first != last; ++first) {
+      std::pair<iterator, bool> result =
+          append_unique(begin(), middle(), *first);
+      if (result.second) {
+        pos_first_new =
+            std::min(pos_first_new, std::distance(begin(), result.first));
+      }
+    }
+  }
+
+  // The new elements might be unordered and contain duplicates, so post-process
+  // the just inserted elements and merge them with the rest, inserting them at
+  // the previously found spot.
+  sort_and_unique(middle(), end(), dupes);
+  std::inplace_merge(std::next(begin(), pos_first_new), middle(), end(),
+                     value_comp());
 }
 
 template <class Key, class Value, class GetKeyFromValue, class KeyCompare>

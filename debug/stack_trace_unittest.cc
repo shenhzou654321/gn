@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 
+#include "base/debug/debugging_flags.h"
 #include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "base/process/kill.h"
@@ -38,7 +39,7 @@ typedef testing::Test StackTraceTest;
 #else
 #define MAYBE_OutputToStream OutputToStream
 #endif
-#if !defined(__UCLIBC__)
+#if !defined(__UCLIBC__) && !defined(_AIX)
 TEST_F(StackTraceTest, MAYBE_OutputToStream) {
   StackTrace trace;
 
@@ -152,7 +153,7 @@ TEST_F(StackTraceTest, DebugPrintBacktrace) {
 }
 #endif  // !defined(__UCLIBC__)
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 #if !defined(OS_IOS)
 static char* newArray() {
   // Clang warns about the mismatched new[]/delete if they occur in the same
@@ -252,12 +253,10 @@ TEST_F(StackTraceTest, itoa_r) {
   EXPECT_EQ("0688", itoa_r_wrapper(0x688, 128, 16, 4));
   EXPECT_EQ("00688", itoa_r_wrapper(0x688, 128, 16, 5));
 }
-#endif  // defined(OS_POSIX) && !defined(OS_ANDROID)
+#endif  // defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 
-#if HAVE_TRACE_STACK_FRAME_POINTERS && !defined(OS_WIN)
-// Windows x64 binaries cannot be built with frame pointer, and MSVC doesn't
-// provide intrinsics to query the frame pointer even for the x86 build, nor
-// does it allow us to take the address of labels, so skip these under Windows.
+#if BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
+
 template <size_t Depth>
 void NOINLINE ExpectStackFramePointers(const void** frames,
                                        size_t max_depth) {
@@ -315,7 +314,7 @@ TEST_F(StackTraceTest, MAYBE_StackEnd) {
   EXPECT_NE(0u, GetStackEnd());
 }
 
-#endif  // HAVE_TRACE_STACK_FRAME_POINTERS && !defined(OS_WIN)
+#endif  // BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
 
 }  // namespace debug
 }  // namespace base

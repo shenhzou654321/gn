@@ -139,12 +139,12 @@ class TestMockTimeTaskRunner : public SingleThreadTaskRunner {
   TimeDelta NextPendingTaskDelay() const;
 
   // SingleThreadTaskRunner:
-  bool RunsTasksOnCurrentThread() const override;
+  bool RunsTasksInCurrentSequence() const override;
   bool PostDelayedTask(const tracked_objects::Location& from_here,
-                       Closure task,
+                       OnceClosure task,
                        TimeDelta delay) override;
   bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
-                                  Closure task,
+                                  OnceClosure task,
                                   TimeDelta delay) override;
 
  protected:

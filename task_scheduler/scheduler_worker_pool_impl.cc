@@ -58,7 +58,7 @@ class SchedulerParallelTaskRunner : public TaskRunner {
 
   // TaskRunner:
   bool PostDelayedTask(const tracked_objects::Location& from_here,
-                       Closure closure,
+                       OnceClosure closure,
                        TimeDelta delay) override {
     // Post the task as part of a one-off single-task Sequence.
     return worker_pool_->PostTaskWithSequence(
@@ -66,7 +66,7 @@ class SchedulerParallelTaskRunner : public TaskRunner {
         make_scoped_refptr(new Sequence));
   }
 
-  bool RunsTasksOnCurrentThread() const override {
+  bool RunsTasksInCurrentSequence() const override {
     return tls_current_worker_pool.Get().Get() == worker_pool_;
   }
 
@@ -93,7 +93,7 @@ class SchedulerSequencedTaskRunner : public SequencedTaskRunner {
 
   // SequencedTaskRunner:
   bool PostDelayedTask(const tracked_objects::Location& from_here,
-                       Closure closure,
+                       OnceClosure closure,
                        TimeDelta delay) override {
     std::unique_ptr<Task> task(
         new Task(from_here, std::move(closure), traits_, delay));
@@ -104,15 +104,13 @@ class SchedulerSequencedTaskRunner : public SequencedTaskRunner {
   }
 
   bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
-                                  Closure closure,
+                                  OnceClosure closure,
                                   base::TimeDelta delay) override {
     // Tasks are never nested within the task scheduler.
     return PostDelayedTask(from_here, std::move(closure), delay);
   }
 
-  bool RunsTasksOnCurrentThread() const override {
-    // TODO(fdoray): Rename TaskRunner::RunsTaskOnCurrentThread() to something
-    // that reflects this behavior more accurately. crbug.com/646905
+  bool RunsTasksInCurrentSequence() const override {
     return sequence_->token() == SequenceToken::GetForCurrentThread();
   }
 
@@ -143,13 +141,10 @@ bool ContainsWorker(const std::vector<scoped_refptr<SchedulerWorker>>& workers,
 class SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl
     : public SchedulerWorker::Delegate {
  public:
-  // |outer| owns the worker for which this delegate is constructed.
-  // |re_enqueue_sequence_callback| is invoked when ReEnqueueSequence() is
-  // called. |index| will be appended to the pool name to label the underlying
-  // worker threads.
+  // |outer| owns the worker for which this delegate is constructed. |index|
+  // will be appended to the pool name to label the underlying worker threads.
   SchedulerWorkerDelegateImpl(
       SchedulerWorkerPoolImpl* outer,
-      const ReEnqueueSequenceCallback& re_enqueue_sequence_callback,
       int index);
   ~SchedulerWorkerDelegateImpl() override;
 
@@ -164,7 +159,6 @@ class SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl
 
  private:
   SchedulerWorkerPoolImpl* outer_;
-  const ReEnqueueSequenceCallback re_enqueue_sequence_callback_;
 
   // Time of the last detach.
   TimeTicks last_detach_time_;
@@ -192,23 +186,108 @@ class SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl
   DISALLOW_COPY_AND_ASSIGN(SchedulerWorkerDelegateImpl);
 };
 
+SchedulerWorkerPoolImpl::SchedulerWorkerPoolImpl(
+    const std::string& name,
+    ThreadPriority priority_hint,
+    TaskTracker* task_tracker,
+    DelayedTaskManager* delayed_task_manager)
+    : name_(name),
+      priority_hint_(priority_hint),
+      idle_workers_stack_lock_(shared_priority_queue_.container_lock()),
+      idle_workers_stack_cv_for_testing_(
+          idle_workers_stack_lock_.CreateConditionVariable()),
+      join_for_testing_returned_(WaitableEvent::ResetPolicy::MANUAL,
+                                 WaitableEvent::InitialState::NOT_SIGNALED),
+      // Mimics the UMA_HISTOGRAM_LONG_TIMES macro.
+      detach_duration_histogram_(Histogram::FactoryTimeGet(
+          kDetachDurationHistogramPrefix + name_ + kPoolNameSuffix,
+          TimeDelta::FromMilliseconds(1),
+          TimeDelta::FromHours(1),
+          50,
+          HistogramBase::kUmaTargetedHistogramFlag)),
+      // Mimics the UMA_HISTOGRAM_COUNTS_1000 macro. When a worker runs more
+      // than 1000 tasks before detaching, there is no need to know the exact
+      // number of tasks that ran.
+      num_tasks_before_detach_histogram_(Histogram::FactoryGet(
+          kNumTasksBeforeDetachHistogramPrefix + name_ + kPoolNameSuffix,
+          1,
+          1000,
+          50,
+          HistogramBase::kUmaTargetedHistogramFlag)),
+      // Mimics the UMA_HISTOGRAM_COUNTS_100 macro. A SchedulerWorker is
+      // expected to run between zero and a few tens of tasks between waits.
+      // When it runs more than 100 tasks, there is no need to know the exact
+      // number of tasks that ran.
+      num_tasks_between_waits_histogram_(Histogram::FactoryGet(
+          kNumTasksBetweenWaitsHistogramPrefix + name_ + kPoolNameSuffix,
+          1,
+          100,
+          50,
+          HistogramBase::kUmaTargetedHistogramFlag)),
+      task_tracker_(task_tracker),
+      delayed_task_manager_(delayed_task_manager) {
+  DCHECK(task_tracker_);
+  DCHECK(delayed_task_manager_);
+}
+
+void SchedulerWorkerPoolImpl::Start(const SchedulerWorkerPoolParams& params) {
+  suggested_reclaim_time_ = params.suggested_reclaim_time();
+
+  {
+    AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
+
+#if DCHECK_IS_ON()
+    DCHECK(!workers_created_.IsSet());
+#endif
+
+    DCHECK(workers_.empty());
+    workers_.resize(params.max_threads());
+
+    // The number of workers created alive is |num_wake_ups_before_start_|, plus
+    // one if the standby thread policy is ONE (in order to start with one alive
+    // idle worker).
+    const int num_alive_workers =
+        num_wake_ups_before_start_ +
+        (params.standby_thread_policy() ==
+                 SchedulerWorkerPoolParams::StandbyThreadPolicy::ONE
+             ? 1
+             : 0);
+
+    // Create workers in reverse order of index so that the worker with the
+    // highest index is at the bottom of the idle stack.
+    for (int index = params.max_threads() - 1; index >= 0; --index) {
+      workers_[index] = make_scoped_refptr(new SchedulerWorker(
+          priority_hint_, MakeUnique<SchedulerWorkerDelegateImpl>(this, index),
+          task_tracker_, params.backward_compatibility(),
+          index < num_alive_workers ? SchedulerWorker::InitialState::ALIVE
+                                    : SchedulerWorker::InitialState::DETACHED));
+
+      // Put workers that won't be woken up at the end of this method on the
+      // idle stack.
+      if (index >= num_wake_ups_before_start_)
+        idle_workers_stack_.Push(workers_[index].get());
+    }
+
+#if DCHECK_IS_ON()
+    workers_created_.Set();
+#endif
+  }
+
+  // Start all workers. CHECK that the first worker can be started (assume that
+  // failure means that threads can't be created on this machine). Wake up one
+  // worker for each wake up that occurred before Start().
+  for (size_t index = 0; index < workers_.size(); ++index) {
+    const bool start_success = workers_[index]->Start();
+    CHECK(start_success || index > 0);
+    if (static_cast<int>(index) < num_wake_ups_before_start_)
+      workers_[index]->WakeUp();
+  }
+}
+
 SchedulerWorkerPoolImpl::~SchedulerWorkerPoolImpl() {
   // SchedulerWorkerPool should never be deleted in production unless its
   // initialization failed.
   DCHECK(join_for_testing_returned_.IsSignaled() || workers_.empty());
-}
-
-// static
-std::unique_ptr<SchedulerWorkerPoolImpl> SchedulerWorkerPoolImpl::Create(
-    const SchedulerWorkerPoolParams& params,
-    const ReEnqueueSequenceCallback& re_enqueue_sequence_callback,
-    TaskTracker* task_tracker,
-    DelayedTaskManager* delayed_task_manager) {
-  auto worker_pool = WrapUnique(
-      new SchedulerWorkerPoolImpl(params, task_tracker, delayed_task_manager));
-  if (worker_pool->Initialize(params, re_enqueue_sequence_callback))
-    return worker_pool;
-  return nullptr;
 }
 
 scoped_refptr<TaskRunner> SchedulerWorkerPoolImpl::CreateTaskRunnerWithTraits(
@@ -220,24 +299,6 @@ scoped_refptr<SequencedTaskRunner>
 SchedulerWorkerPoolImpl::CreateSequencedTaskRunnerWithTraits(
     const TaskTraits& traits) {
   return make_scoped_refptr(new SchedulerSequencedTaskRunner(traits, this));
-}
-
-void SchedulerWorkerPoolImpl::ReEnqueueSequence(
-    scoped_refptr<Sequence> sequence,
-    const SequenceSortKey& sequence_sort_key) {
-  shared_priority_queue_.BeginTransaction()->Push(std::move(sequence),
-                                                  sequence_sort_key);
-
-  // The thread calling this method just ran a Task from |sequence| and will
-  // soon try to get another Sequence from which to run a Task. If the thread
-  // belongs to this pool, it will get that Sequence from
-  // |shared_priority_queue_|. When that's the case, there is no need to wake up
-  // another worker after |sequence| is inserted in |shared_priority_queue_|. If
-  // we did wake up another worker, we would waste resources by having more
-  // workers trying to get a Sequence from |shared_priority_queue_| than the
-  // number of Sequences in it.
-  if (tls_current_worker_pool.Get().Get() != this)
-    WakeUpOneWorker();
 }
 
 bool SchedulerWorkerPoolImpl::PostTaskWithSequence(
@@ -252,7 +313,9 @@ bool SchedulerWorkerPoolImpl::PostTaskWithSequence(
   if (task->delayed_run_time.is_null()) {
     PostTaskWithSequenceNow(std::move(task), std::move(sequence));
   } else {
-    DCHECK(task->task);
+    // Use CHECK instead of DCHECK to crash earlier. See http://crbug.com/711167
+    // for details.
+    CHECK(task->task);
     delayed_task_manager_->AddDelayedTask(
         std::move(task),
         Bind(
@@ -300,16 +363,25 @@ void SchedulerWorkerPoolImpl::GetHistograms(
 }
 
 int SchedulerWorkerPoolImpl::GetMaxConcurrentTasksDeprecated() const {
+#if DCHECK_IS_ON()
+  DCHECK(workers_created_.IsSet());
+#endif
   return workers_.size();
 }
 
 void SchedulerWorkerPoolImpl::WaitForAllWorkersIdleForTesting() {
+#if DCHECK_IS_ON()
+  DCHECK(workers_created_.IsSet());
+#endif
   AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
   while (idle_workers_stack_.Size() < workers_.size())
     idle_workers_stack_cv_for_testing_->Wait();
 }
 
 void SchedulerWorkerPoolImpl::JoinForTesting() {
+#if DCHECK_IS_ON()
+  DCHECK(workers_created_.IsSet());
+#endif
   DCHECK(!CanWorkerDetachForTesting() || suggested_reclaim_time_.is_max())
       << "Workers can detach during join.";
   for (const auto& worker : workers_)
@@ -335,10 +407,8 @@ size_t SchedulerWorkerPoolImpl::NumberOfAliveWorkersForTesting() {
 SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
     SchedulerWorkerDelegateImpl(
         SchedulerWorkerPoolImpl* outer,
-        const ReEnqueueSequenceCallback& re_enqueue_sequence_callback,
         int index)
     : outer_(outer),
-      re_enqueue_sequence_callback_(re_enqueue_sequence_callback),
       index_(index) {}
 
 SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
@@ -347,12 +417,9 @@ SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
 void SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::OnMainEntry(
     SchedulerWorker* worker) {
 #if DCHECK_IS_ON()
-  // Wait for |outer_->workers_created_| to avoid traversing
-  // |outer_->workers_| while it is being filled by Initialize().
-  outer_->workers_created_.Wait();
+  DCHECK(outer_->workers_created_.IsSet());
   DCHECK(ContainsWorker(outer_->workers_, worker));
 #endif
-
   DCHECK_EQ(num_tasks_since_last_wait_, 0U);
 
   if (!last_detach_time_.is_null()) {
@@ -437,9 +504,12 @@ void SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::DidRunTask() {
 
 void SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
     ReEnqueueSequence(scoped_refptr<Sequence> sequence) {
-  // |re_enqueue_sequence_callback_| will determine in which PriorityQueue
-  // |sequence| must be enqueued.
-  re_enqueue_sequence_callback_.Run(std::move(sequence));
+  const SequenceSortKey sequence_sort_key = sequence->GetSortKey();
+  outer_->shared_priority_queue_.BeginTransaction()->Push(std::move(sequence),
+                                                          sequence_sort_key);
+  // The thread calling this method will soon call GetWork(). Therefore, there
+  // is no need to wake up a worker to run the sequence that was just inserted
+  // into |outer_->shared_priority_queue_|.
 }
 
 TimeDelta SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::
@@ -465,96 +535,21 @@ void SchedulerWorkerPoolImpl::SchedulerWorkerDelegateImpl::OnDetach() {
   last_detach_time_ = TimeTicks::Now();
 }
 
-SchedulerWorkerPoolImpl::SchedulerWorkerPoolImpl(
-    const SchedulerWorkerPoolParams& params,
-    TaskTracker* task_tracker,
-    DelayedTaskManager* delayed_task_manager)
-    : name_(params.name()),
-      suggested_reclaim_time_(params.suggested_reclaim_time()),
-      idle_workers_stack_lock_(shared_priority_queue_.container_lock()),
-      idle_workers_stack_cv_for_testing_(
-          idle_workers_stack_lock_.CreateConditionVariable()),
-      join_for_testing_returned_(WaitableEvent::ResetPolicy::MANUAL,
-                                 WaitableEvent::InitialState::NOT_SIGNALED),
-#if DCHECK_IS_ON()
-      workers_created_(WaitableEvent::ResetPolicy::MANUAL,
-                       WaitableEvent::InitialState::NOT_SIGNALED),
-#endif
-      // Mimics the UMA_HISTOGRAM_LONG_TIMES macro.
-      detach_duration_histogram_(Histogram::FactoryTimeGet(
-          kDetachDurationHistogramPrefix + name_ + kPoolNameSuffix,
-          TimeDelta::FromMilliseconds(1),
-          TimeDelta::FromHours(1),
-          50,
-          HistogramBase::kUmaTargetedHistogramFlag)),
-      // Mimics the UMA_HISTOGRAM_COUNTS_1000 macro. When a worker runs more
-      // than 1000 tasks before detaching, there is no need to know the exact
-      // number of tasks that ran.
-      num_tasks_before_detach_histogram_(Histogram::FactoryGet(
-          kNumTasksBeforeDetachHistogramPrefix + name_ + kPoolNameSuffix,
-          1,
-          1000,
-          50,
-          HistogramBase::kUmaTargetedHistogramFlag)),
-      // Mimics the UMA_HISTOGRAM_COUNTS_100 macro. A SchedulerWorker is
-      // expected to run between zero and a few tens of tasks between waits.
-      // When it runs more than 100 tasks, there is no need to know the exact
-      // number of tasks that ran.
-      num_tasks_between_waits_histogram_(Histogram::FactoryGet(
-          kNumTasksBetweenWaitsHistogramPrefix + name_ + kPoolNameSuffix,
-          1,
-          100,
-          50,
-          HistogramBase::kUmaTargetedHistogramFlag)),
-      task_tracker_(task_tracker),
-      delayed_task_manager_(delayed_task_manager) {
-  DCHECK(task_tracker_);
-  DCHECK(delayed_task_manager_);
-}
-
-bool SchedulerWorkerPoolImpl::Initialize(
-    const SchedulerWorkerPoolParams& params,
-    const ReEnqueueSequenceCallback& re_enqueue_sequence_callback) {
-  AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
-
-  DCHECK(workers_.empty());
-  workers_.resize(params.max_threads());
-
-  // Create workers and push them to the idle stack in reverse order of index.
-  // This ensures that they are woken up in order of index and that the ALIVE
-  // worker is on top of the stack.
-  for (int index = params.max_threads() - 1; index >= 0; --index) {
-    const bool is_standby_lazy =
-        params.standby_thread_policy() ==
-        SchedulerWorkerPoolParams::StandbyThreadPolicy::LAZY;
-    const SchedulerWorker::InitialState initial_state =
-        (index == 0 && !is_standby_lazy)
-            ? SchedulerWorker::InitialState::ALIVE
-            : SchedulerWorker::InitialState::DETACHED;
-    scoped_refptr<SchedulerWorker> worker = SchedulerWorker::Create(
-        params.priority_hint(),
-        MakeUnique<SchedulerWorkerDelegateImpl>(
-            this, re_enqueue_sequence_callback, index),
-        task_tracker_, initial_state, params.backward_compatibility());
-    if (!worker)
-      break;
-    idle_workers_stack_.Push(worker.get());
-    workers_[index] = std::move(worker);
-  }
-
-#if DCHECK_IS_ON()
-  workers_created_.Signal();
-#endif
-
-  return !workers_.empty();
-}
-
 void SchedulerWorkerPoolImpl::WakeUpOneWorker() {
-  SchedulerWorker* worker;
+  SchedulerWorker* worker = nullptr;
   {
     AutoSchedulerLock auto_lock(idle_workers_stack_lock_);
-    worker = idle_workers_stack_.Pop();
+
+#if DCHECK_IS_ON()
+    DCHECK_EQ(workers_.empty(), !workers_created_.IsSet());
+#endif
+
+    if (workers_.empty())
+      ++num_wake_ups_before_start_;
+    else
+      worker = idle_workers_stack_.Pop();
   }
+
   if (worker)
     worker->WakeUp();
   // TODO(robliao): Honor StandbyThreadPolicy::ONE here and consider adding

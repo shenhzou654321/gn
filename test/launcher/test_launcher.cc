@@ -115,7 +115,10 @@ TestLauncherTracer* GetTestLauncherTracer() {
   return tracer;
 }
 
-#if defined(OS_POSIX)
+// TODO(fuchsia): Fuchsia does not have POSIX signals, but equivalent
+// functionality will probably be necessary eventually. See
+// https://crbug.com/706592.
+#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
 // Self-pipe that makes it possible to do complex shutdown handling
 // outside of the signal handler.
 int g_shutdown_pipe[2] = { -1, -1 };
@@ -159,19 +162,7 @@ void KillSpawnedTestProcesses() {
   fprintf(stdout, "done.\n");
   fflush(stdout);
 }
-
-// I/O watcher for the reading end of the self-pipe above.
-// Terminates any launched child processes and exits the process.
-void OnShutdownPipeReadable() {
-  fprintf(stdout, "\nCaught signal. Killing spawned test processes...\n");
-  fflush(stdout);
-
-  KillSpawnedTestProcesses();
-
-  // The signal would normally kill the process, so exit now.
-  _exit(1);
-}
-#endif  // defined(OS_POSIX)
+#endif  // defined(OS_POSIX) && !defined(OS_FUCHSIA)
 
 // Parses the environment variable var as an Int32.  If it is unset, returns
 // true.  If it is set, unsets it then converts it to Int32 before
@@ -473,10 +464,10 @@ void DoLaunchChildTestProcess(
 
   // Run target callback on the thread it was originating from, not on
   // a worker pool thread.
-  task_runner->PostTask(
-      FROM_HERE,
-      Bind(&RunCallback, completed_callback, exit_code,
-           TimeTicks::Now() - start_time, was_timeout, output_file_contents));
+  task_runner->PostTask(FROM_HERE,
+                        BindOnce(&RunCallback, completed_callback, exit_code,
+                                 TimeTicks::Now() - start_time, was_timeout,
+                                 output_file_contents));
 }
 
 }  // namespace
@@ -490,8 +481,7 @@ const char kGTestRepeatFlag[] = "gtest_repeat";
 const char kGTestRunDisabledTestsFlag[] = "gtest_also_run_disabled_tests";
 const char kGTestOutputFlag[] = "gtest_output";
 
-TestLauncherDelegate::~TestLauncherDelegate() {
-}
+TestLauncherDelegate::~TestLauncherDelegate() {}
 
 TestLauncher::TestLauncher(TestLauncherDelegate* launcher_delegate,
                            size_t parallel_jobs)
@@ -512,8 +502,7 @@ TestLauncher::TestLauncher(TestLauncherDelegate* launcher_delegate,
                       TimeDelta::FromSeconds(kOutputTimeoutSeconds),
                       this,
                       &TestLauncher::OnOutputTimeout),
-      parallel_jobs_(parallel_jobs) {
-}
+      parallel_jobs_(parallel_jobs) {}
 
 TestLauncher::~TestLauncher() {}
 
@@ -525,7 +514,9 @@ bool TestLauncher::Run() {
   // original value.
   int requested_cycles = cycles_;
 
-#if defined(OS_POSIX)
+// TODO(fuchsia): Fuchsia does not have POSIX signals. Something similiar to
+// this will likely need to be implemented. See https://crbug.com/706592.
+#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
   CHECK_EQ(0, pipe(g_shutdown_pipe));
 
   struct sigaction action;
@@ -538,14 +529,15 @@ bool TestLauncher::Run() {
   CHECK_EQ(0, sigaction(SIGTERM, &action, NULL));
 
   auto controller = base::FileDescriptorWatcher::WatchReadable(
-      g_shutdown_pipe[0], base::Bind(&OnShutdownPipeReadable));
-#endif  // defined(OS_POSIX)
+      g_shutdown_pipe[0],
+      base::Bind(&TestLauncher::OnShutdownPipeReadable, Unretained(this)));
+#endif  // defined(OS_POSIX) && !defined(OS_FUCHSIA)
 
   // Start the watchdog timer.
   watchdog_timer_.Reset();
 
   ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, Bind(&TestLauncher::RunTestIteration, Unretained(this)));
+      FROM_HERE, BindOnce(&TestLauncher::RunTestIteration, Unretained(this)));
 
   RunLoop().Run();
 
@@ -577,11 +569,11 @@ void TestLauncher::LaunchChildGTestProcess(
 
   GetTaskRunner()->PostTask(
       FROM_HERE,
-      Bind(&DoLaunchChildTestProcess, new_command_line, timeout, options,
-           redirect_stdio, RetainedRef(ThreadTaskRunnerHandle::Get()),
-           Bind(&TestLauncher::OnLaunchTestProcessFinished, Unretained(this),
-                completed_callback),
-           launched_callback));
+      BindOnce(&DoLaunchChildTestProcess, new_command_line, timeout, options,
+               redirect_stdio, RetainedRef(ThreadTaskRunnerHandle::Get()),
+               Bind(&TestLauncher::OnLaunchTestProcessFinished,
+                    Unretained(this), completed_callback),
+               launched_callback));
 }
 
 void TestLauncher::OnTestFinished(const TestResult& original_result) {
@@ -680,9 +672,9 @@ void TestLauncher::OnTestFinished(const TestResult& original_result) {
             test_broken_count_);
     fflush(stdout);
 
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
     KillSpawnedTestProcesses();
-#endif  // defined(OS_POSIX)
+#endif  // defined(OS_POSIX) && !defined(OS_FUCHSIA)
 
     MaybeSaveSummaryAsJSON({"BROKEN_TEST_EARLY_EXIT", kUnreliableResultsTag});
 
@@ -1072,7 +1064,7 @@ void TestLauncher::RunTests() {
 
     // No tests have actually been started, so kick off the next iteration.
     ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, Bind(&TestLauncher::RunTestIteration, Unretained(this)));
+        FROM_HERE, BindOnce(&TestLauncher::RunTestIteration, Unretained(this)));
   }
 }
 
@@ -1098,8 +1090,24 @@ void TestLauncher::RunTestIteration() {
   results_tracker_.OnTestIterationStarting();
 
   ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, Bind(&TestLauncher::RunTests, Unretained(this)));
+      FROM_HERE, BindOnce(&TestLauncher::RunTests, Unretained(this)));
 }
+
+#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
+// I/O watcher for the reading end of the self-pipe above.
+// Terminates any launched child processes and exits the process.
+void TestLauncher::OnShutdownPipeReadable() {
+  fprintf(stdout, "\nCaught signal. Killing spawned test processes...\n");
+  fflush(stdout);
+
+  KillSpawnedTestProcesses();
+
+  MaybeSaveSummaryAsJSON({"CAUGHT_TERMINATION_SIGNAL", kUnreliableResultsTag});
+
+  // The signal would normally kill the process, so exit now.
+  _exit(1);
+}
+#endif  // defined(OS_POSIX)
 
 void TestLauncher::MaybeSaveSummaryAsJSON(
     const std::vector<std::string>& additional_tags) {
@@ -1153,7 +1161,7 @@ void TestLauncher::OnTestIterationFinished() {
 
   // Kick off the next iteration.
   ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, Bind(&TestLauncher::RunTestIteration, Unretained(this)));
+      FROM_HERE, BindOnce(&TestLauncher::RunTestIteration, Unretained(this)));
 }
 
 void TestLauncher::OnOutputTimeout() {
