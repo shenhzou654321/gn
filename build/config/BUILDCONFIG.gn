@@ -279,6 +279,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
     current_os == "winrt_81_phone" || current_os == "winrt_10") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = false
@@ -289,6 +290,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "mac") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = true
@@ -299,6 +301,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "android") {
   is_android = true
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = false
@@ -309,6 +312,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "chromeos") {
   is_android = false
   is_chromeos = true
+  is_fuchsia = false
   is_ios = false
   is_linux = true
   is_mac = false
@@ -322,6 +326,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
   # Posix variant.
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = false
@@ -332,6 +337,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "ios") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = true
   is_linux = false
   is_mac = false
@@ -342,6 +348,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "linux") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = true
   is_mac = false
@@ -352,6 +359,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "freebsd") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = false
