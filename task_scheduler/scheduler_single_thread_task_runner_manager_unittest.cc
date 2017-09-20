@@ -23,8 +23,8 @@
 
 #if defined(OS_WIN)
 #include <windows.h>
-#include <objbase.h>
 
+#include "base/win/com_init_util.h"
 #include "base/win/current_module.h"
 #endif  // defined(OS_WIN)
 
@@ -42,7 +42,7 @@ class TaskSchedulerSingleThreadTaskRunnerManagerTest : public testing::Test {
     service_thread_.Start();
     delayed_task_manager_.Start(service_thread_.task_runner());
     single_thread_task_runner_manager_ =
-        MakeUnique<SchedulerSingleThreadTaskRunnerManager>(
+        std::make_unique<SchedulerSingleThreadTaskRunnerManager>(
             &task_tracker_, &delayed_task_manager_);
     StartSingleThreadTaskRunnerManagerFromSetUp();
   }
@@ -146,7 +146,7 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest, SameThreadUsed) {
 }
 
 TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest,
-       RunsTasksOnCurrentThread) {
+       RunsTasksInCurrentSequence) {
   scoped_refptr<SingleThreadTaskRunner> task_runner_1 =
       single_thread_task_runner_manager_
           ->CreateSingleThreadTaskRunnerWithTraits(
@@ -158,26 +158,28 @@ TEST_F(TaskSchedulerSingleThreadTaskRunnerManagerTest,
               "B", {TaskShutdownBehavior::BLOCK_SHUTDOWN},
               SingleThreadTaskRunnerThreadMode::DEDICATED);
 
-  EXPECT_FALSE(task_runner_1->RunsTasksOnCurrentThread());
-  EXPECT_FALSE(task_runner_2->RunsTasksOnCurrentThread());
+  EXPECT_FALSE(task_runner_1->RunsTasksInCurrentSequence());
+  EXPECT_FALSE(task_runner_2->RunsTasksInCurrentSequence());
 
   task_runner_1->PostTask(
-      FROM_HERE, BindOnce(
-                     [](scoped_refptr<SingleThreadTaskRunner> task_runner_1,
-                        scoped_refptr<SingleThreadTaskRunner> task_runner_2) {
-                       EXPECT_TRUE(task_runner_1->RunsTasksOnCurrentThread());
-                       EXPECT_FALSE(task_runner_2->RunsTasksOnCurrentThread());
-                     },
-                     task_runner_1, task_runner_2));
+      FROM_HERE,
+      BindOnce(
+          [](scoped_refptr<SingleThreadTaskRunner> task_runner_1,
+             scoped_refptr<SingleThreadTaskRunner> task_runner_2) {
+            EXPECT_TRUE(task_runner_1->RunsTasksInCurrentSequence());
+            EXPECT_FALSE(task_runner_2->RunsTasksInCurrentSequence());
+          },
+          task_runner_1, task_runner_2));
 
   task_runner_2->PostTask(
-      FROM_HERE, BindOnce(
-                     [](scoped_refptr<SingleThreadTaskRunner> task_runner_1,
-                        scoped_refptr<SingleThreadTaskRunner> task_runner_2) {
-                       EXPECT_FALSE(task_runner_1->RunsTasksOnCurrentThread());
-                       EXPECT_TRUE(task_runner_2->RunsTasksOnCurrentThread());
-                     },
-                     task_runner_1, task_runner_2));
+      FROM_HERE,
+      BindOnce(
+          [](scoped_refptr<SingleThreadTaskRunner> task_runner_1,
+             scoped_refptr<SingleThreadTaskRunner> task_runner_2) {
+            EXPECT_FALSE(task_runner_1->RunsTasksInCurrentSequence());
+            EXPECT_TRUE(task_runner_2->RunsTasksInCurrentSequence());
+          },
+          task_runner_1, task_runner_2));
 
   task_tracker_.Shutdown();
 }
@@ -448,14 +450,8 @@ TEST_P(TaskSchedulerSingleThreadTaskRunnerManagerCommonTest,
       single_thread_task_runner_manager_->CreateCOMSTATaskRunnerWithTraits(
           "A", {TaskShutdownBehavior::BLOCK_SHUTDOWN}, GetParam());
 
-  com_task_runner->PostTask(
-      FROM_HERE, BindOnce([]() {
-        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        if (SUCCEEDED(hr)) {
-          ADD_FAILURE() << "COM STA was not initialized on this thread";
-          CoUninitialize();
-        }
-      }));
+  com_task_runner->PostTask(FROM_HERE, BindOnce(&win::AssertComApartmentType,
+                                                win::ComApartmentType::STA));
 
   task_tracker_.Shutdown();
 }

@@ -12,7 +12,6 @@
 #include "base/pending_task.h"
 #include "base/threading/thread_local.h"
 #include "base/trace_event/trace_event.h"
-#include "base/tracked_objects.h"
 
 namespace base {
 
@@ -29,15 +28,9 @@ DWORD CALLBACK WorkItemCallback(void* param) {
 
   GetWorkerPoolRunningOnThisThread()->Set(true);
 
-  tracked_objects::TaskStopwatch stopwatch;
-  stopwatch.Start();
   std::move(pending_task->task).Run();
-  stopwatch.Stop();
 
   GetWorkerPoolRunningOnThisThread()->Set(false);
-
-  tracked_objects::ThreadData::TallyRunOnWorkerThreadIfTracking(
-      pending_task->birth_tally, pending_task->time_posted, stopwatch);
 
   delete pending_task;
   return 0;
@@ -65,7 +58,7 @@ bool PostTaskInternal(PendingTask* pending_task, bool task_is_slow) {
 }  // namespace
 
 // static
-bool WorkerPool::PostTask(const tracked_objects::Location& from_here,
+bool WorkerPool::PostTask(const Location& from_here,
                           base::OnceClosure task,
                           bool task_is_slow) {
   PendingTask* pending_task = new PendingTask(from_here, std::move(task));

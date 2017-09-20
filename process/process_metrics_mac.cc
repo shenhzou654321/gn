@@ -19,7 +19,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
-#include "base/sys_info.h"
 
 namespace base {
 
@@ -68,7 +67,7 @@ bool GetTaskInfo(mach_port_t task, task_basic_info_64* task_info_data) {
   return kr == KERN_SUCCESS;
 }
 
-bool GetCPUTypeForProcess(pid_t pid, cpu_type_t* cpu_type) {
+bool GetCPUType(cpu_type_t* cpu_type) {
   size_t len = sizeof(*cpu_type);
   int result = sysctlbyname("sysctl.proc_cputype",
                             cpu_type,
@@ -165,7 +164,7 @@ bool ProcessMetrics::GetMemoryBytes(size_t* private_bytes,
   }
 
   cpu_type_t cpu_type;
-  if (!GetCPUTypeForProcess(process_, &cpu_type))
+  if (!GetCPUType(&cpu_type))
     return false;
 
   // The same region can be referenced multiple times. To avoid double counting
@@ -309,7 +308,7 @@ ProcessMetrics::TaskVMInfo ProcessMetrics::GetTaskVMInfo() const {
   (r)->tv_usec = (a)->microseconds;       \
 } while (0)
 
-double ProcessMetrics::GetCPUUsage() {
+double ProcessMetrics::GetPlatformIndependentCPUUsage() {
   mach_port_t task = TaskForPid(process_);
   if (task == MACH_PORT_NULL)
     return 0;
@@ -407,7 +406,6 @@ ProcessMetrics::ProcessMetrics(ProcessHandle process,
       last_system_time_(0),
       last_absolute_idle_wakeups_(0),
       port_provider_(port_provider) {
-  processor_count_ = SysInfo::NumberOfProcessors();
 }
 
 mach_port_t ProcessMetrics::TaskForPid(ProcessHandle process) const {

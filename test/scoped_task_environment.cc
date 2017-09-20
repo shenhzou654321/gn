@@ -46,7 +46,9 @@ class ScopedTaskEnvironment::TestTaskTracker
   TestTaskTracker();
 
   void RegisterOnQueueEmptyClosure(OnceClosure queue_empty_closure);
-  void AssertOnQueueEmptyClosureIsNull();
+
+  // Returns true if closure needed reset.
+  bool ResetOnQueueEmptyClosureIfNotNull();
 
   // Allow running tasks.
   void AllowRunRask();
@@ -58,8 +60,10 @@ class ScopedTaskEnvironment::TestTaskTracker
   friend class ScopedTaskEnvironment;
 
   // internal::TaskSchedulerImpl::TaskTrackerImpl:
-  void PerformRunTask(std::unique_ptr<internal::Task> task,
-                      internal::Sequence* sequence) override;
+  void RunOrSkipTask(std::unique_ptr<internal::Task> task,
+                     internal::Sequence* sequence,
+                     bool can_run_task) override;
+  void OnRunNextTaskCompleted() override;
 
   // Synchronizes accesses to members below.
   Lock lock_;
@@ -91,14 +95,19 @@ ScopedTaskEnvironment::ScopedTaskEnvironment(
       task_tracker_(new TestTaskTracker()) {
   CHECK(!TaskScheduler::GetInstance());
 
-  // Instantiate a TaskScheduler with 1 thread in each of its 4 pools. Threads
+  // Instantiate a TaskScheduler with 2 threads in each of its 4 pools. Threads
   // stay alive even when they don't have work.
-  constexpr int kMaxThreads = 1;
+  // Each pool uses two threads to prevent deadlocks in unit tests that have a
+  // sequence that uses WithBaseSyncPrimitives() to wait on the result of
+  // another sequence. This isn't perfect (doesn't solve wait chains) but solves
+  // the basic use case for now.
+  // TODO(fdoray/jeffreyhe): Make the TaskScheduler dynamically replace blocked
+  // threads and get rid of this limitation. http://crbug.com/738104
+  constexpr int kMaxThreads = 2;
   const TimeDelta kSuggestedReclaimTime = TimeDelta::Max();
-  const SchedulerWorkerPoolParams worker_pool_params(
-      SchedulerWorkerPoolParams::StandbyThreadPolicy::ONE, kMaxThreads,
-      kSuggestedReclaimTime);
-  TaskScheduler::SetInstance(MakeUnique<internal::TaskSchedulerImpl>(
+  const SchedulerWorkerPoolParams worker_pool_params(kMaxThreads,
+                                                     kSuggestedReclaimTime);
+  TaskScheduler::SetInstance(std::make_unique<internal::TaskSchedulerImpl>(
       "ScopedTaskEnvironment", WrapUnique(task_tracker_)));
   task_scheduler_ = TaskScheduler::GetInstance();
   TaskScheduler::GetInstance()->Start({worker_pool_params, worker_pool_params,
@@ -148,7 +157,12 @@ void ScopedTaskEnvironment::RunUntilIdle() {
     run_loop.Run();
     MessageLoop::current()->RemoveTaskObserver(&task_observer);
 
-    task_tracker_->AssertOnQueueEmptyClosureIsNull();
+    // If |task_tracker_|'s |queue_empty_closure_| is not null, it means that
+    // external code exited the RunLoop (through deprecated static methods) and
+    // that the MessageLoop and TaskScheduler queues might not be empty. Run the
+    // loop again to make sure that no task remains.
+    if (task_tracker_->ResetOnQueueEmptyClosureIfNotNull())
+      continue;
 
     // If tasks other than the QuitWhenIdle closure ran on the main thread, they
     // may have posted TaskScheduler tasks that didn't run yet. Another
@@ -181,9 +195,15 @@ void ScopedTaskEnvironment::TestTaskTracker::RegisterOnQueueEmptyClosure(
   queue_empty_closure_ = std::move(queue_empty_closure);
 }
 
-void ScopedTaskEnvironment::TestTaskTracker::AssertOnQueueEmptyClosureIsNull() {
+bool ScopedTaskEnvironment::TestTaskTracker::
+    ResetOnQueueEmptyClosureIfNotNull() {
   AutoLock auto_lock(lock_);
-  CHECK(!queue_empty_closure_);
+  if (queue_empty_closure_) {
+    queue_empty_closure_ = Closure();
+    return true;
+  }
+
+  return false;
 }
 
 void ScopedTaskEnvironment::TestTaskTracker::AllowRunRask() {
@@ -203,9 +223,10 @@ bool ScopedTaskEnvironment::TestTaskTracker::DisallowRunTasks() {
   return true;
 }
 
-void ScopedTaskEnvironment::TestTaskTracker::PerformRunTask(
+void ScopedTaskEnvironment::TestTaskTracker::RunOrSkipTask(
     std::unique_ptr<internal::Task> task,
-    internal::Sequence* sequence) {
+    internal::Sequence* sequence,
+    bool can_run_task) {
   {
     AutoLock auto_lock(lock_);
 
@@ -215,8 +236,8 @@ void ScopedTaskEnvironment::TestTaskTracker::PerformRunTask(
     ++num_tasks_running_;
   }
 
-  internal::TaskSchedulerImpl::TaskTrackerImpl::PerformRunTask(std::move(task),
-                                                               sequence);
+  internal::TaskSchedulerImpl::TaskTrackerImpl::RunOrSkipTask(
+      std::move(task), sequence, can_run_task);
 
   {
     AutoLock auto_lock(lock_);
@@ -224,14 +245,16 @@ void ScopedTaskEnvironment::TestTaskTracker::PerformRunTask(
     CHECK_GT(num_tasks_running_, 0);
     CHECK(can_run_tasks_);
 
-    // Notify the main thread when no task other than the current one is running
-    // or queued.
-    if (num_tasks_running_ == 1 &&
-        GetNumPendingUndelayedTasksForTesting() == 1 && queue_empty_closure_) {
-      std::move(queue_empty_closure_).Run();
-    }
-
     --num_tasks_running_;
+  }
+}
+
+void ScopedTaskEnvironment::TestTaskTracker::OnRunNextTaskCompleted() {
+  // Notify the main thread when no tasks are running or queued.
+  AutoLock auto_lock(lock_);
+  if (num_tasks_running_ == 0 && GetNumPendingUndelayedTasksForTesting() == 0 &&
+      queue_empty_closure_) {
+    std::move(queue_empty_closure_).Run();
   }
 }
 

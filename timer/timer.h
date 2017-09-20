@@ -41,11 +41,17 @@
 //
 // These APIs are not thread safe. All methods must be called from the same
 // sequence (not necessarily the construction sequence), except for the
-// destructor and SetTaskRunner() which may be called from any sequence when the
-// timer is not running (i.e. when Start() has never been called or Stop() has
-// been called since the last Start()). By default, the scheduled tasks will be
-// run on the same sequence that the Timer was *started on*, but this can be
-// changed *prior* to Start() via SetTaskRunner().
+// destructor and SetTaskRunner().
+// - The destructor may be called from any sequence when the timer is not
+// running and there is no scheduled task active, i.e. when Start() has never
+// been called or after AbandonAndStop() has been called.
+// - SetTaskRunner() may be called from any sequence when the timer is not
+// running, i.e. when Start() has never been called or Stop() has been called
+// since the last Start().
+//
+// By default, the scheduled tasks will be run on the same sequence that the
+// Timer was *started on*, but this can be changed *prior* to Start() via
+// SetTaskRunner().
 
 #ifndef BASE_TIMER_TIMER_H_
 #define BASE_TIMER_TIMER_H_
@@ -91,11 +97,11 @@ class BASE_EXPORT Timer {
 
   // Construct a timer with retained task info. If |tick_clock| is provided, it
   // is used instead of TimeTicks::Now() to get TimeTicks when scheduling tasks.
-  Timer(const tracked_objects::Location& posted_from,
+  Timer(const Location& posted_from,
         TimeDelta delay,
         const base::Closure& user_task,
         bool is_repeating);
-  Timer(const tracked_objects::Location& posted_from,
+  Timer(const Location& posted_from,
         TimeDelta delay,
         const base::Closure& user_task,
         bool is_repeating,
@@ -118,13 +124,21 @@ class BASE_EXPORT Timer {
 
   // Start the timer to run at the given |delay| from now. If the timer is
   // already running, it will be replaced to call the given |user_task|.
-  virtual void Start(const tracked_objects::Location& posted_from,
+  virtual void Start(const Location& posted_from,
                      TimeDelta delay,
                      const base::Closure& user_task);
 
   // Call this method to stop and cancel the timer.  It is a no-op if the timer
   // is not running.
   virtual void Stop();
+
+  // Stop running task (if any) and abandon scheduled task (if any).
+  void AbandonAndStop() {
+    AbandonScheduledTask();
+
+    Stop();
+    // No more member accesses here: |this| could be deleted at this point.
+  }
 
   // Call this method to reset the timer delay. The |user_task_| must be set. If
   // the timer is not running, this will start it by posting a task.
@@ -141,7 +155,7 @@ class BASE_EXPORT Timer {
   void set_desired_run_time(TimeTicks desired) { desired_run_time_ = desired; }
   void set_is_running(bool running) { is_running_ = running; }
 
-  const tracked_objects::Location& posted_from() const { return posted_from_; }
+  const Location& posted_from() const { return posted_from_; }
   bool retain_user_task() const { return retain_user_task_; }
   bool is_repeating() const { return is_repeating_; }
   bool is_running() const { return is_running_; }
@@ -166,14 +180,6 @@ class BASE_EXPORT Timer {
   // Called by BaseTimerTaskInternal when the delayed task fires.
   void RunScheduledTask();
 
-  // Stop running task (if any) and abandon scheduled task (if any).
-  void AbandonAndStop() {
-    AbandonScheduledTask();
-
-    Stop();
-    // No more member accesses here: |this| could be deleted at this point.
-  }
-
   // When non-null, the |scheduled_task_| was posted to call RunScheduledTask()
   // at |scheduled_run_time_|.
   BaseTimerTaskInternal* scheduled_task_;
@@ -183,7 +189,7 @@ class BASE_EXPORT Timer {
   scoped_refptr<SequencedTaskRunner> task_runner_;
 
   // Location in user code.
-  tracked_objects::Location posted_from_;
+  Location posted_from_;
   // Delay requested by user.
   TimeDelta delay_;
   // |user_task_| is what the user wants to be run at |desired_run_time_|.
@@ -203,7 +209,8 @@ class BASE_EXPORT Timer {
   TimeTicks desired_run_time_;
 
   // Timer isn't thread-safe and must only be used on its origin sequence
-  // (sequence on which it was started).
+  // (sequence on which it was started). Once fully Stop()'ed it may be
+  // destroyed or restarted on another sequence.
   SequenceChecker origin_sequence_checker_;
 
   // Repeating timers automatically post the task again before calling the task
@@ -242,7 +249,7 @@ class BaseTimerMethodPointer : public Timer {
   // already running, it will be replaced to call a task formed from
   // |reviewer->*method|.
   template <class Receiver>
-  void Start(const tracked_objects::Location& posted_from,
+  void Start(const Location& posted_from,
              TimeDelta delay,
              Receiver* receiver,
              void (Receiver::*method)()) {
@@ -283,14 +290,14 @@ class RepeatingTimer : public BaseTimerMethodPointer {
 class DelayTimer : protected Timer {
  public:
   template <class Receiver>
-  DelayTimer(const tracked_objects::Location& posted_from,
+  DelayTimer(const Location& posted_from,
              TimeDelta delay,
              Receiver* receiver,
              void (Receiver::*method)())
       : DelayTimer(posted_from, delay, receiver, method, nullptr) {}
 
   template <class Receiver>
-  DelayTimer(const tracked_objects::Location& posted_from,
+  DelayTimer(const Location& posted_from,
              TimeDelta delay,
              Receiver* receiver,
              void (Receiver::*method)(),
@@ -301,16 +308,8 @@ class DelayTimer : protected Timer {
               false,
               tick_clock) {}
 
-  void Reset() override;
+  using Timer::Reset;
 };
-
-// This class has a templated method so it can not be exported without failing
-// to link in MSVC. But clang-plugin does not allow inline definitions of
-// virtual methods, so the inline definition lives in the header file here
-// to satisfy both.
-inline void DelayTimer::Reset() {
-  Timer::Reset();
-}
 
 }  // namespace base
 

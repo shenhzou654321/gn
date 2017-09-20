@@ -14,15 +14,12 @@ namespace win {
 
 namespace {
 
-enum class ComInitStatus {
-  NONE,
-  STA,
-  MTA,
-};
+const char kComNotInitialized[] = "COM is not initialized on this thread.";
 
 // Derived from combase.dll.
 struct OleTlsData {
   enum ApartmentFlags {
+    LOGICAL_THREAD_REGISTERED = 0x2,
     STA = 0x80,
     MTA = 0x140,
   };
@@ -36,27 +33,46 @@ struct OleTlsData {
   // to work between x86 and x64 builds.
 };
 
-ComInitStatus GetComInitStatusForThread() {
+OleTlsData* GetOleTlsData() {
   TEB* teb = NtCurrentTeb();
-  OleTlsData* ole_tls_data = reinterpret_cast<OleTlsData*>(teb->ReservedForOle);
+  return reinterpret_cast<OleTlsData*>(teb->ReservedForOle);
+}
+
+ComApartmentType GetComApartmentTypeForThread() {
+  OleTlsData* ole_tls_data = GetOleTlsData();
   if (!ole_tls_data)
-    return ComInitStatus::NONE;
+    return ComApartmentType::NONE;
 
   if (ole_tls_data->apartment_flags & OleTlsData::ApartmentFlags::STA)
-    return ComInitStatus::STA;
+    return ComApartmentType::STA;
 
   if ((ole_tls_data->apartment_flags & OleTlsData::ApartmentFlags::MTA) ==
       OleTlsData::ApartmentFlags::MTA) {
-    return ComInitStatus::MTA;
+    return ComApartmentType::MTA;
   }
 
-  return ComInitStatus::NONE;
+  return ComApartmentType::NONE;
 }
 
 }  // namespace
 
-void AssertComInitialized() {
-  DCHECK_NE(ComInitStatus::NONE, GetComInitStatusForThread());
+void AssertComInitialized(const char* message) {
+  if (GetComApartmentTypeForThread() != ComApartmentType::NONE)
+    return;
+
+  // COM worker threads don't always set up the apartment, but they do perform
+  // some thread registration, so we allow those.
+  OleTlsData* ole_tls_data = GetOleTlsData();
+  if (ole_tls_data && (ole_tls_data->apartment_flags &
+                       OleTlsData::ApartmentFlags::LOGICAL_THREAD_REGISTERED)) {
+    return;
+  }
+
+  NOTREACHED() << (message ? message : kComNotInitialized);
+}
+
+void AssertComApartmentType(ComApartmentType apartment_type) {
+  DCHECK_EQ(apartment_type, GetComApartmentTypeForThread());
 }
 
 #endif  // DCHECK_IS_ON()

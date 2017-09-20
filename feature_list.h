@@ -30,10 +30,9 @@ enum FeatureState {
 // The Feature struct is used to define the default state for a feature. See
 // comment below for more details. There must only ever be one struct instance
 // for a given feature name - generally defined as a constant global variable or
-// file static.
+// file static. It should never be used as a constexpr as it breaks
+// pointer-based identity lookup.
 struct BASE_EXPORT Feature {
-  constexpr Feature(const char* name, FeatureState default_state)
-      : name(name), default_state(default_state) {}
   // The name of the feature. This should be unique to each feature and is used
   // for enabling/disabling features via command line flags and experiments.
   // It is strongly recommended to use CamelCase style for feature names, e.g.
@@ -43,6 +42,14 @@ struct BASE_EXPORT Feature {
   // The default state (i.e. enabled or disabled) for this feature.
   const FeatureState default_state;
 };
+
+#if DCHECK_IS_ON() && defined(SYZYASAN)
+// SyzyASAN builds have DCHECKs built-in, but configurable at run-time to been
+// fatal, or not, via a DcheckIsFatal feature. We define the Feature here since
+// it is checked in FeatureList::SetInstance(). See crbug.com/596231.
+constexpr Feature kSyzyAsanDCheckIsFatalFeature{
+    "DcheckIsFatal", base::FEATURE_DISABLED_BY_DEFAULT};
+#endif  // defined(SYZYASAN)
 
 // The FeatureList class is used to determine whether a given feature is on or
 // off. It provides an authoritative answer, taking into account command-line

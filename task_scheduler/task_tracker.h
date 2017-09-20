@@ -33,7 +33,7 @@ namespace internal {
 class BASE_EXPORT TaskTracker {
  public:
   TaskTracker();
-  ~TaskTracker();
+  virtual ~TaskTracker();
 
   // Synchronously shuts down the scheduler. Once this is called, only tasks
   // posted with the BLOCK_SHUTDOWN behavior will be run. Returns when:
@@ -76,10 +76,14 @@ class BASE_EXPORT TaskTracker {
   void SetHasShutdownStartedForTesting();
 
  protected:
-  // Runs |task|. |sequence| is the sequence from which |task| was extracted.
-  // An override is expected to call its parent's implementation but
-  // is free to perform extra work before and after doing so.
-  virtual void PerformRunTask(std::unique_ptr<Task> task, Sequence* sequence);
+  // Runs and deletes |task| if |can_run_task| is true. Otherwise, just deletes
+  // |task|. |task| is always deleted in the environment where it runs or would
+  // have run. |sequence| is the sequence from which |task| was extracted. An
+  // override is expected to call its parent's implementation but is free to
+  // perform extra work before and after doing so.
+  virtual void RunOrSkipTask(std::unique_ptr<Task> task,
+                             Sequence* sequence,
+                             bool can_run_task);
 
 #if DCHECK_IS_ON()
   // Returns true if this context should be exempt from blocking shutdown
@@ -87,6 +91,10 @@ class BASE_EXPORT TaskTracker {
   // TODO(robliao): Remove when http://crbug.com/698140 is fixed.
   virtual bool IsPostingBlockShutdownTaskAfterShutdownAllowed();
 #endif
+
+  // Called at the very end of RunNextTask() after the completion of all task
+  // metrics accounting.
+  virtual void OnRunNextTaskCompleted() {}
 
   // Returns the number of undelayed tasks that haven't completed their
   // execution.

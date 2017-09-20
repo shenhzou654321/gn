@@ -159,6 +159,7 @@ void PartitionAllocInit(PartitionRoot* root,
 }
 
 void PartitionAllocGenericInit(PartitionRootGeneric* root) {
+  root->lock.init();
   subtle::SpinLock::Guard guard(root->lock);
 
   PartitionAllocBaseInit(root);
@@ -342,7 +343,7 @@ static ALWAYS_INLINE void PartitionDecommitSystemPages(PartitionRootBase* root,
 static ALWAYS_INLINE void PartitionRecommitSystemPages(PartitionRootBase* root,
                                                        void* address,
                                                        size_t length) {
-  RecommitSystemPages(address, length);
+  CHECK(RecommitSystemPages(address, length, PageReadWrite));
   PartitionIncreaseCommittedPages(root, length);
 }
 
@@ -374,7 +375,7 @@ static ALWAYS_INLINE void* PartitionAllocPartitionPages(
   // architectures.
   char* requestedAddress = root->next_super_page;
   char* super_page = reinterpret_cast<char*>(AllocPages(
-      requestedAddress, kSuperPageSize, kSuperPageSize, PageAccessible));
+      requestedAddress, kSuperPageSize, kSuperPageSize, PageReadWrite));
   if (UNLIKELY(!super_page))
     return 0;
 
@@ -389,12 +390,13 @@ static ALWAYS_INLINE void* PartitionAllocPartitionPages(
   // hole in the middle.
   // This is where we put page metadata and also a tiny amount of extent
   // metadata.
-  SetSystemPagesInaccessible(super_page, kSystemPageSize);
-  SetSystemPagesInaccessible(super_page + (kSystemPageSize * 2),
-                             kPartitionPageSize - (kSystemPageSize * 2));
+  CHECK(SetSystemPagesAccess(super_page, kSystemPageSize, PageInaccessible));
+  CHECK(SetSystemPagesAccess(super_page + (kSystemPageSize * 2),
+                             kPartitionPageSize - (kSystemPageSize * 2),
+                             PageInaccessible));
   // Also make the last partition page a guard page.
-  SetSystemPagesInaccessible(super_page + (kSuperPageSize - kPartitionPageSize),
-                             kPartitionPageSize);
+  CHECK(SetSystemPagesAccess(super_page + (kSuperPageSize - kPartitionPageSize),
+                             kPartitionPageSize, PageInaccessible));
 
   // If we were after a specific address, but didn't get it, assume that
   // the system chose a lousy address. Here most OS'es have a default
@@ -644,7 +646,7 @@ static ALWAYS_INLINE PartitionPage* PartitionDirectMap(PartitionRootBase* root,
   // TODO: these pages will be zero-filled. Consider internalizing an
   // allocZeroed() API so we can avoid a memset() entirely in this case.
   char* ptr = reinterpret_cast<char*>(
-      AllocPages(0, map_size, kSuperPageSize, PageAccessible));
+      AllocPages(0, map_size, kSuperPageSize, PageReadWrite));
   if (UNLIKELY(!ptr))
     return nullptr;
 
@@ -653,11 +655,12 @@ static ALWAYS_INLINE PartitionPage* PartitionDirectMap(PartitionRootBase* root,
   PartitionIncreaseCommittedPages(root, committed_page_size);
 
   char* slot = ptr + kPartitionPageSize;
-  SetSystemPagesInaccessible(ptr + (kSystemPageSize * 2),
-                             kPartitionPageSize - (kSystemPageSize * 2));
+  CHECK(SetSystemPagesAccess(ptr + (kSystemPageSize * 2),
+                             kPartitionPageSize - (kSystemPageSize * 2),
+                             PageInaccessible));
 #if !defined(ARCH_CPU_64_BITS)
-  SetSystemPagesInaccessible(ptr, kSystemPageSize);
-  SetSystemPagesInaccessible(slot + size, kSystemPageSize);
+  CHECK(SetSystemPagesAccess(ptr, kSystemPageSize, PageInaccessible));
+  CHECK(SetSystemPagesAccess(slot + size, kSystemPageSize, PageInaccessible));
 #endif
 
   PartitionSuperPageExtentEntry* extent =
@@ -981,13 +984,14 @@ bool PartitionReallocDirectMappedInPlace(PartitionRootGeneric* root,
     // Shrink by decommitting unneeded pages and making them inaccessible.
     size_t decommitSize = current_size - new_size;
     PartitionDecommitSystemPages(root, char_ptr + new_size, decommitSize);
-    SetSystemPagesInaccessible(char_ptr + new_size, decommitSize);
+    CHECK(SetSystemPagesAccess(char_ptr + new_size, decommitSize,
+                               PageInaccessible));
   } else if (new_size <= partitionPageToDirectMapExtent(page)->map_size) {
     // Grow within the actually allocated memory. Just need to make the
     // pages accessible again.
     size_t recommit_size = new_size - current_size;
-    bool ret = SetSystemPagesAccessible(char_ptr + current_size, recommit_size);
-    CHECK(ret);
+    CHECK(SetSystemPagesAccess(char_ptr + current_size, recommit_size,
+                               PageReadWrite));
     PartitionRecommitSystemPages(root, char_ptr + current_size, recommit_size);
 
 #if DCHECK_IS_ON()
@@ -1100,7 +1104,11 @@ static size_t PartitionPurgePage(PartitionPage* page, bool discard) {
   DCHECK(page->num_unprovisioned_slots < bucket_num_slots);
   size_t num_slots = bucket_num_slots - page->num_unprovisioned_slots;
   char slot_usage[max_slot_count];
+#if !defined(OS_WIN)
+  // The last freelist entry should not be discarded when using OS_WIN.
+  // DiscardVirtualMemory makes the contents of discarded memory undefined.
   size_t last_slot = static_cast<size_t>(-1);
+#endif
   memset(slot_usage, 1, num_slots);
   char* ptr = reinterpret_cast<char*>(PartitionPageToPointer(page));
   PartitionFreelistEntry* entry = page->freelist_head;
@@ -1111,6 +1119,7 @@ static size_t PartitionPurgePage(PartitionPage* page, bool discard) {
     DCHECK(slotIndex < num_slots);
     slot_usage[slotIndex] = 0;
     entry = PartitionFreelistMask(entry->next);
+#if !defined(OS_WIN)
     // If we have a slot where the masked freelist entry is 0, we can
     // actually discard that freelist entry because touching a discarded
     // page is guaranteed to return original content or 0.
@@ -1118,6 +1127,7 @@ static size_t PartitionPurgePage(PartitionPage* page, bool discard) {
     // because the masking function is negation.)
     if (!PartitionFreelistMask(entry))
       last_slot = slotIndex;
+#endif
   }
 
   // If the slot(s) at the end of the slot span are not in used, we can
@@ -1162,6 +1172,9 @@ static size_t PartitionPurgePage(PartitionPage* page, bool discard) {
       *entry_ptr = PartitionFreelistMask(entry);
       entry_ptr = reinterpret_cast<PartitionFreelistEntry**>(entry);
       num_new_entries++;
+#if !defined(OS_WIN)
+      last_slot = slotIndex;
+#endif
     }
     // Terminate the freelist chain.
     *entry_ptr = nullptr;
@@ -1184,8 +1197,12 @@ static size_t PartitionPurgePage(PartitionPage* page, bool discard) {
     // null, we can discard that pointer value too.
     char* begin_ptr = ptr + (i * slot_size);
     char* end_ptr = begin_ptr + slot_size;
+#if !defined(OS_WIN)
     if (i != last_slot)
       begin_ptr += sizeof(PartitionFreelistEntry);
+#else
+    begin_ptr += sizeof(PartitionFreelistEntry);
+#endif
     begin_ptr = reinterpret_cast<char*>(
         RoundUpToSystemPage(reinterpret_cast<size_t>(begin_ptr)));
     end_ptr = reinterpret_cast<char*>(

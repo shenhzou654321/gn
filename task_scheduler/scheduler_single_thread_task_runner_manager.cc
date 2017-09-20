@@ -92,17 +92,13 @@ class SchedulerWorkerDelegate : public SchedulerWorker::Delegate {
 
   TimeDelta GetSleepTimeout() override { return TimeDelta::Max(); }
 
-  bool CanDetach(SchedulerWorker* worker) override { return false; }
-
-  void OnDetach() override { NOTREACHED(); }
-
   bool RunsTasksInCurrentSequence() {
     // We check the thread ref instead of the sequence for the benefit of COM
     // callbacks which may execute without a sequence context.
     return thread_ref_checker_.IsCurrentThreadSameAsSetThread();
   }
 
-  void OnMainExit() override {
+  void OnMainExit(SchedulerWorker* /* worker */) override {
     // Move |sequence_| to |local_sequence| so that if we have the last
     // reference to the sequence we don't destroy it (and its tasks) within
     // |sequence_lock_|.
@@ -151,7 +147,7 @@ class SchedulerWorkerCOMDelegate : public SchedulerWorkerDelegate {
   void OnMainEntry(SchedulerWorker* worker) override {
     SchedulerWorkerDelegate::OnMainEntry(worker);
 
-    scoped_com_initializer_ = MakeUnique<win::ScopedCOMInitializer>();
+    scoped_com_initializer_ = std::make_unique<win::ScopedCOMInitializer>();
   }
 
   scoped_refptr<Sequence> GetWork(SchedulerWorker* worker) override {
@@ -186,7 +182,9 @@ class SchedulerWorkerCOMDelegate : public SchedulerWorkerDelegate {
     return sequence;
   }
 
-  void OnMainExit() override { scoped_com_initializer_.reset(); }
+  void OnMainExit(SchedulerWorker* /* worker */) override {
+    scoped_com_initializer_.reset();
+  }
 
   void WaitForWork(WaitableEvent* wake_up_event) override {
     DCHECK(wake_up_event);
@@ -207,14 +205,14 @@ class SchedulerWorkerCOMDelegate : public SchedulerWorkerDelegate {
     MSG msg;
     if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE) {
       auto pump_message_task =
-          MakeUnique<Task>(FROM_HERE,
-                           Bind(
-                               [](MSG msg) {
-                                 TranslateMessage(&msg);
-                                 DispatchMessage(&msg);
-                               },
-                               std::move(msg)),
-                           TaskTraits(MayBlock()), TimeDelta());
+          std::make_unique<Task>(FROM_HERE,
+                                 Bind(
+                                     [](MSG msg) {
+                                       TranslateMessage(&msg);
+                                       DispatchMessage(&msg);
+                                     },
+                                     std::move(msg)),
+                                 TaskTraits(MayBlock()), TimeDelta());
       if (task_tracker_->WillPostTask(pump_message_task.get())) {
         bool was_empty =
             message_pump_sequence_->PushTask(std::move(pump_message_task));
@@ -257,10 +255,11 @@ class SchedulerSingleThreadTaskRunnerManager::SchedulerSingleThreadTaskRunner
   }
 
   // SingleThreadTaskRunner:
-  bool PostDelayedTask(const tracked_objects::Location& from_here,
+  bool PostDelayedTask(const Location& from_here,
                        OnceClosure closure,
                        TimeDelta delay) override {
-    auto task = MakeUnique<Task>(from_here, std::move(closure), traits_, delay);
+    auto task =
+        std::make_unique<Task>(from_here, std::move(closure), traits_, delay);
     task->single_thread_task_runner_ref = this;
 
     if (!outer_->task_tracker_->WillPostTask(task.get()))
@@ -270,13 +269,14 @@ class SchedulerSingleThreadTaskRunnerManager::SchedulerSingleThreadTaskRunner
       PostTaskNow(std::move(task));
     } else {
       outer_->delayed_task_manager_->AddDelayedTask(
-          std::move(task), Bind(&SchedulerSingleThreadTaskRunner::PostTaskNow,
-                                Unretained(this)));
+          std::move(task),
+          BindOnce(&SchedulerSingleThreadTaskRunner::PostTaskNow,
+                   Unretained(this)));
     }
     return true;
   }
 
-  bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
+  bool PostNonNestableDelayedTask(const Location& from_here,
                                   OnceClosure closure,
                                   TimeDelta delay) override {
     // Tasks are never nested within the task scheduler.
@@ -456,8 +456,6 @@ SchedulerSingleThreadTaskRunnerManager::CreateTaskRunnerWithTraitsImpl(
 }
 
 void SchedulerSingleThreadTaskRunnerManager::JoinForTesting() {
-  ReleaseSharedSchedulerWorkers();
-
   decltype(workers_) local_workers;
   {
     AutoSchedulerLock auto_lock(lock_);
@@ -473,13 +471,18 @@ void SchedulerSingleThreadTaskRunnerManager::JoinForTesting() {
         << "New worker(s) unexpectedly registered during join.";
     workers_ = std::move(local_workers);
   }
+
+  // Release shared SchedulerWorkers at the end so they get joined above. If
+  // this call happens before the joins, the SchedulerWorkers are effectively
+  // detached and may outlive the SchedulerSingleThreadTaskRunnerManager.
+  ReleaseSharedSchedulerWorkers();
 }
 
 template <>
 std::unique_ptr<SchedulerWorkerDelegate>
 SchedulerSingleThreadTaskRunnerManager::CreateSchedulerWorkerDelegate<
     SchedulerWorkerDelegate>(const std::string& name, int id) {
-  return MakeUnique<SchedulerWorkerDelegate>(
+  return std::make_unique<SchedulerWorkerDelegate>(
       StringPrintf("TaskSchedulerSingleThread%s%d", name.c_str(), id));
 }
 
@@ -488,7 +491,7 @@ template <>
 std::unique_ptr<SchedulerWorkerDelegate>
 SchedulerSingleThreadTaskRunnerManager::CreateSchedulerWorkerDelegate<
     SchedulerWorkerCOMDelegate>(const std::string& name, int id) {
-  return MakeUnique<SchedulerWorkerCOMDelegate>(
+  return std::make_unique<SchedulerWorkerCOMDelegate>(
       StringPrintf("TaskSchedulerSingleThreadCOMSTA%s%d", name.c_str(), id),
       task_tracker_);
 }

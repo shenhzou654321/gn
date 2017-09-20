@@ -87,8 +87,9 @@ namespace {
 VlogInfo* g_vlog_info = nullptr;
 VlogInfo* g_vlog_info_prev = nullptr;
 
-const char* const log_severity_names[LOG_NUM_SEVERITIES] = {
-  "INFO", "WARNING", "ERROR", "FATAL" };
+const char* const log_severity_names[] = {"INFO", "WARNING", "ERROR", "FATAL"};
+static_assert(LOG_NUM_SEVERITIES == arraysize(log_severity_names),
+              "Incorrect number of log_severity_names");
 
 const char* log_severity_name(int severity) {
   if (severity >= 0 && severity < LOG_NUM_SEVERITIES)
@@ -349,6 +350,13 @@ void CloseLogFileUnlocked() {
 }
 
 }  // namespace
+
+#if DCHECK_IS_ON() && defined(SYZYASAN)
+// In DCHECK-enabled SyzyASAN builds, allow the meaning of LOG_DCHECK to be
+// determined at run-time. We default it to INFO, to avoid it triggering
+// crashes before the run-time has explicitly chosen the behaviour.
+BASE_EXPORT logging::LogSeverity LOG_DCHECK = LOG_INFO;
+#endif
 
 // This is never instantiated, it's just used for EAT_STREAM_PARAMETERS to have
 // an object of the correct type on the LHS of the unused part of the ternary
@@ -871,14 +879,15 @@ BASE_EXPORT std::string SystemErrorCodeToString(SystemErrorCode error_code) {
   if (len) {
     // Messages returned by system end with line breaks.
     return base::CollapseWhitespaceASCII(msgbuf, true) +
-        base::StringPrintf(" (0x%X)", error_code);
+           base::StringPrintf(" (0x%lX)", error_code);
   }
-  return base::StringPrintf("Error (0x%X) while retrieving error. (0x%X)",
+  return base::StringPrintf("Error (0x%lX) while retrieving error. (0x%lX)",
                             GetLastError(), error_code);
 }
 #elif defined(OS_POSIX)
 BASE_EXPORT std::string SystemErrorCodeToString(SystemErrorCode error_code) {
-  return base::safe_strerror(error_code);
+  return base::safe_strerror(error_code) +
+         base::StringPrintf(" (%d)", error_code);
 }
 #else
 #error Not implemented
@@ -912,6 +921,10 @@ ErrnoLogMessage::ErrnoLogMessage(const char* file,
 
 ErrnoLogMessage::~ErrnoLogMessage() {
   stream() << ": " << SystemErrorCodeToString(err_);
+  // We're about to crash (CHECK). Put |err_| on the stack (by placing it in a
+  // field) and use Alias in hopes that it makes it into crash dumps.
+  int last_error = err_;
+  base::debug::Alias(&last_error);
 }
 #endif  // defined(OS_WIN)
 

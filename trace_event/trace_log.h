@@ -16,7 +16,6 @@
 #include "base/atomicops.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/trace_config.h"
 #include "base/trace_event/trace_event_impl.h"
@@ -193,7 +192,7 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
       const char* scope,
       unsigned long long id,
       int num_args,
-      const char** arg_names,
+      const char* const* arg_names,
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
       std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
@@ -206,7 +205,7 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
       unsigned long long id,
       unsigned long long bind_id,
       int num_args,
-      const char** arg_names,
+      const char* const* arg_names,
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
       std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
@@ -219,7 +218,7 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
       unsigned long long id,
       int process_id,
       int num_args,
-      const char** arg_names,
+      const char* const* arg_names,
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
       std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
@@ -233,7 +232,7 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
       int thread_id,
       const TimeTicks& timestamp,
       int num_args,
-      const char** arg_names,
+      const char* const* arg_names,
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
       std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
@@ -248,7 +247,7 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
       int thread_id,
       const TimeTicks& timestamp,
       int num_args,
-      const char** arg_names,
+      const char* const* arg_names,
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
       std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
@@ -259,7 +258,7 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
       const unsigned char* category_group_enabled,
       const char* name,
       int num_args,
-      const char** arg_names,
+      const char* const* arg_names,
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
       std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
@@ -268,6 +267,13 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
   void UpdateTraceEventDuration(const unsigned char* category_group_enabled,
                                 const char* name,
                                 TraceEventHandle handle);
+
+  void UpdateTraceEventDurationExplicit(
+      const unsigned char* category_group_enabled,
+      const char* name,
+      TraceEventHandle handle,
+      const TimeTicks& now,
+      const ThreadTicks& thread_now);
 
   void EndFilteredEvent(const unsigned char* category_group_enabled,
                         const char* name,
@@ -363,10 +369,6 @@ class BASE_EXPORT TraceLog : public MemoryDumpProvider {
   void UpdateCategoryState(TraceCategory* category);
 
   void CreateFiltersForTraceConfig();
-
-  // Configure synthetic delays based on the values set in the current
-  // trace config.
-  void UpdateSyntheticDelaysFromTraceConfig();
 
   InternalTraceOptions GetInternalOptionsFromTraceConfig(
       const TraceConfig& config);

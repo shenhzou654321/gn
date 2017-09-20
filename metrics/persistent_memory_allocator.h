@@ -513,7 +513,7 @@ class BASE_EXPORT PersistentMemoryAllocator {
         const_cast<void*>(GetBlockData(ref, T::kPersistentTypeId, size));
     if (!mem)
       return nullptr;
-    DCHECK_EQ(0U, reinterpret_cast<uintptr_t>(mem) & (ALIGNOF(T) - 1));
+    DCHECK_EQ(0U, reinterpret_cast<uintptr_t>(mem) & (alignof(T) - 1));
     return new (mem) T();
   }
   template <typename T>
@@ -541,7 +541,7 @@ class BASE_EXPORT PersistentMemoryAllocator {
       return nullptr;
     // Ensure the allocator's internal alignment is sufficient for this object.
     // This protects against coding errors in the allocator.
-    DCHECK_EQ(0U, reinterpret_cast<uintptr_t>(mem) & (ALIGNOF(T) - 1));
+    DCHECK_EQ(0U, reinterpret_cast<uintptr_t>(mem) & (alignof(T) - 1));
     // Change the type, clearing the memory if so desired. The new type is
     // "transitioning" so that there is no race condition with the construction
     // of the object should another thread be simultaneously iterating over
@@ -850,8 +850,8 @@ class BASE_EXPORT DelayedPersistentAllocation {
   // The desired type and size of the allocated segment plus the offset
   // within it for the defined request.
   const uint32_t type_;
-  const size_t size_;
-  const size_t offset_;
+  const uint32_t size_;
+  const uint32_t offset_;
 
   // Flag indicating if allocation should be made iterable when done.
   const bool make_iterable_;

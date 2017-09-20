@@ -19,9 +19,6 @@
 #include "base/threading/thread_local.h"
 #include "base/threading/worker_pool.h"
 #include "base/trace_event/trace_event.h"
-#include "base/tracked_objects.h"
-
-using tracked_objects::TrackedTime;
 
 namespace base {
 
@@ -48,7 +45,7 @@ class WorkerPoolImpl {
   // destructor is never called.
   ~WorkerPoolImpl() = delete;
 
-  void PostTask(const tracked_objects::Location& from_here,
+  void PostTask(const Location& from_here,
                 base::OnceClosure task,
                 bool task_is_slow);
 
@@ -60,7 +57,7 @@ WorkerPoolImpl::WorkerPoolImpl()
     : pool_(new base::PosixDynamicThreadPool("WorkerPool",
                                              kIdleSecondsBeforeExit)) {}
 
-void WorkerPoolImpl::PostTask(const tracked_objects::Location& from_here,
+void WorkerPoolImpl::PostTask(const Location& from_here,
                               base::OnceClosure task,
                               bool task_is_slow) {
   pool_->PostTask(from_here, std::move(task));
@@ -96,14 +93,7 @@ void WorkerThread::ThreadMain() {
     if (pending_task.task.is_null())
       break;
     TRACE_TASK_EXECUTION("WorkerThread::ThreadMain::Run", pending_task);
-
-    tracked_objects::TaskStopwatch stopwatch;
-    stopwatch.Start();
     std::move(pending_task.task).Run();
-    stopwatch.Stop();
-
-    tracked_objects::ThreadData::TallyRunOnWorkerThreadIfTracking(
-        pending_task.birth_tally, pending_task.time_posted, stopwatch);
   }
 
   // The WorkerThread is non-joinable, so it deletes itself.
@@ -113,7 +103,7 @@ void WorkerThread::ThreadMain() {
 }  // namespace
 
 // static
-bool WorkerPool::PostTask(const tracked_objects::Location& from_here,
+bool WorkerPool::PostTask(const Location& from_here,
                           base::OnceClosure task,
                           bool task_is_slow) {
   g_lazy_worker_pool.Pointer()->PostTask(from_here, std::move(task),
@@ -138,9 +128,8 @@ PosixDynamicThreadPool::~PosixDynamicThreadPool() {
     pending_tasks_.pop();
 }
 
-void PosixDynamicThreadPool::PostTask(
-    const tracked_objects::Location& from_here,
-    base::OnceClosure task) {
+void PosixDynamicThreadPool::PostTask(const Location& from_here,
+                                      base::OnceClosure task) {
   PendingTask pending_task(from_here, std::move(task));
   AddTask(&pending_task);
 }

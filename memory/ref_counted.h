@@ -100,6 +100,27 @@ class BASE_EXPORT RefCountedBase {
     return ref_count_ == 0;
   }
 
+  // Returns true if it is safe to read or write the object, from a thread
+  // safety standpoint. Should be DCHECK'd from the methods of RefCounted
+  // classes if there is a danger of objects being shared across threads.
+  //
+  // This produces fewer false positives than adding a separate SequenceChecker
+  // into the subclass, because it automatically detaches from the sequence when
+  // the reference count is 1 (and never fails if there is only one reference).
+  //
+  // This means unlike a separate SequenceChecker, it will permit a singly
+  // referenced object to be passed between threads (not holding a reference on
+  // the sending thread), but will trap if the sending thread holds onto a
+  // reference, or if the object is accessed from multiple threads
+  // simultaneously.
+  bool IsOnValidSequence() const {
+#if DCHECK_IS_ON()
+    return ref_count_ <= 1 || CalledOnValidSequence();
+#else
+    return true;
+#endif
+  }
+
  private:
   template <typename U>
   friend scoped_refptr<U> base::AdoptRef(U*);
@@ -142,10 +163,18 @@ class BASE_EXPORT RefCountedThreadSafeBase {
 
   ~RefCountedThreadSafeBase();
 
-  void AddRef() const;
-
+// Release and AddRef are suitable for inlining on X86 because they generate
+// very small code sequences. On other platforms (ARM), it causes a size
+// regression and is probably not worth it.
+#if defined(ARCH_CPU_X86_FAMILY)
+  // Returns true if the object should self-delete.
+  bool Release() const { return ReleaseImpl(); }
+  void AddRef() const { AddRefImpl(); }
+#else
   // Returns true if the object should self-delete.
   bool Release() const;
+  void AddRef() const;
+#endif
 
  private:
   template <typename U>
@@ -158,7 +187,32 @@ class BASE_EXPORT RefCountedThreadSafeBase {
 #endif
   }
 
-  mutable AtomicRefCount ref_count_ = 0;
+  ALWAYS_INLINE void AddRefImpl() const {
+#if DCHECK_IS_ON()
+    DCHECK(!in_dtor_);
+    DCHECK(!needs_adopt_ref_)
+        << "This RefCounted object is created with non-zero reference count."
+        << " The first reference to such a object has to be made by AdoptRef or"
+        << " MakeRefCounted.";
+#endif
+    ref_count_.Increment();
+  }
+
+  ALWAYS_INLINE bool ReleaseImpl() const {
+#if DCHECK_IS_ON()
+    DCHECK(!in_dtor_);
+    DCHECK(!ref_count_.IsZero());
+#endif
+    if (!ref_count_.Decrement()) {
+#if DCHECK_IS_ON()
+      in_dtor_ = true;
+#endif
+      return true;
+    }
+    return false;
+  }
+
+  mutable AtomicRefCount ref_count_{0};
 #if DCHECK_IS_ON()
   mutable bool needs_adopt_ref_ = false;
   mutable bool in_dtor_ = false;
@@ -210,7 +264,9 @@ class BASE_EXPORT ScopedAllowCrossThreadRefCountAccess final {
 // to trap unsafe cross thread usage. A subclass instance of RefCounted can be
 // passed to another execution sequence only when its ref count is 1. If the ref
 // count is more than 1, the RefCounted class verifies the ref updates are made
-// on the same execution sequence as the previous ones.
+// on the same execution sequence as the previous ones. The subclass can also
+// manually call IsOnValidSequence to trap other non-thread-safe accesses; see
+// the documentation for that method.
 //
 //
 // The reference count starts from zero by default, and we intended to migrate
@@ -250,6 +306,11 @@ class RefCounted : public subtle::RefCountedBase {
 
   void Release() const {
     if (subtle::RefCountedBase::Release()) {
+      // Prune the code paths which the static analyzer may take to simulate
+      // object destruction. Use-after-free errors aren't possible given the
+      // lifetime guarantees of the refcounting system.
+      ANALYZER_SKIP_THIS_PATH();
+
       delete static_cast<const T*>(this);
     }
   }
@@ -307,6 +368,7 @@ class RefCountedThreadSafe : public subtle::RefCountedThreadSafeBase {
 
   void Release() const {
     if (subtle::RefCountedThreadSafeBase::Release()) {
+      ANALYZER_SKIP_THIS_PATH();
       Traits::Destruct(static_cast<const T*>(this));
     }
   }
@@ -331,6 +393,7 @@ class RefCountedData
  public:
   RefCountedData() : data() {}
   RefCountedData(const T& in_value) : data(in_value) {}
+  RefCountedData(T&& in_value) : data(std::move(in_value)) {}
 
   T data;
 
@@ -506,13 +569,19 @@ class scoped_refptr {
   }
 
   scoped_refptr<T>& operator=(scoped_refptr<T>&& r) {
-    scoped_refptr<T>(std::move(r)).swap(*this);
+    scoped_refptr<T> tmp(std::move(r));
+    tmp.swap(*this);
     return *this;
   }
 
   template <typename U>
   scoped_refptr<T>& operator=(scoped_refptr<U>&& r) {
-    scoped_refptr<T>(std::move(r)).swap(*this);
+    // We swap with a temporary variable to guarantee that |ptr_| is released
+    // immediately. A naive implementation which swaps |this| and |r| would
+    // unintentionally extend the lifetime of |ptr_| to at least the lifetime of
+    // |r|.
+    scoped_refptr<T> tmp(std::move(r));
+    tmp.swap(*this);
     return *this;
   }
 

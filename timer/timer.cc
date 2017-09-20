@@ -75,13 +75,13 @@ Timer::Timer(bool retain_user_task, bool is_repeating, TickClock* tick_clock)
   origin_sequence_checker_.DetachFromSequence();
 }
 
-Timer::Timer(const tracked_objects::Location& posted_from,
+Timer::Timer(const Location& posted_from,
              TimeDelta delay,
              const base::Closure& user_task,
              bool is_repeating)
     : Timer(posted_from, delay, user_task, is_repeating, nullptr) {}
 
-Timer::Timer(const tracked_objects::Location& posted_from,
+Timer::Timer(const Location& posted_from,
              TimeDelta delay,
              const base::Closure& user_task,
              bool is_repeating,
@@ -99,8 +99,7 @@ Timer::Timer(const tracked_objects::Location& posted_from,
 }
 
 Timer::~Timer() {
-  // TODO(gab): Enable this once Stop() properly detaches from sequence.
-  // DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
   AbandonAndStop();
 }
 
@@ -126,7 +125,7 @@ void Timer::SetTaskRunner(scoped_refptr<SequencedTaskRunner> task_runner) {
   task_runner_.swap(task_runner);
 }
 
-void Timer::Start(const tracked_objects::Location& posted_from,
+void Timer::Start(const Location& posted_from,
                   TimeDelta delay,
                   const base::Closure& user_task) {
   DCHECK(origin_sequence_checker_.CalledOnValidSequence());
@@ -144,6 +143,10 @@ void Timer::Stop() {
   // DCHECK(origin_sequence_checker_.CalledOnValidSequence());
 
   is_running_ = false;
+
+  // It's safe to destroy or restart Timer on another sequence after Stop().
+  origin_sequence_checker_.DetachFromSequence();
+
   if (!retain_user_task_)
     user_task_.Reset();
   // No more member accesses here: |this| could be deleted after freeing

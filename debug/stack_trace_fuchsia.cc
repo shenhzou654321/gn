@@ -4,14 +4,20 @@
 
 #include "base/debug/stack_trace.h"
 
-#include <magenta/process.h>
-#include <magenta/syscalls.h>
-#include <magenta/syscalls/port.h>
-#include <magenta/types.h>
+#include <link.h>
+#include <stddef.h>
+#include <string.h>
 #include <threads.h>
 #include <unwind.h>
+#include <zircon/crashlogger.h>
+#include <zircon/process.h>
+#include <zircon/syscalls.h>
+#include <zircon/syscalls/definitions.h>
+#include <zircon/syscalls/port.h>
+#include <zircon/types.h>
 
 #include <algorithm>
+#include <iomanip>
 #include <iostream>
 
 #include "base/logging.h"
@@ -20,6 +26,9 @@ namespace base {
 namespace debug {
 
 namespace {
+
+const char kProcessNamePrefix[] = "app:";
+const size_t kProcessNamePrefixLen = arraysize(kProcessNamePrefix) - 1;
 
 struct BacktraceData {
   void** trace_array;
@@ -38,71 +47,123 @@ _Unwind_Reason_Code UnwindStore(struct _Unwind_Context* context,
   return _URC_NO_REASON;
 }
 
-constexpr uint64_t kExceptionKey = 0x424144u;  // "BAD".
-bool g_in_process_exception_handler_enabled;
+// Stores and queries debugging symbol map info for the current process.
+class SymbolMap {
+ public:
+  struct Entry {
+    void* addr;
+    char name[ZX_MAX_NAME_LEN + kProcessNamePrefixLen];
+  };
 
-int SelfDumpFunc(void* arg) {
-  mx_handle_t exception_port =
-      static_cast<mx_handle_t>(reinterpret_cast<uintptr_t>(arg));
+  SymbolMap();
+  ~SymbolMap() = default;
 
-  mx_exception_packet_t packet;
-  mx_status_t status =
-      mx_port_wait(exception_port, MX_TIME_INFINITE, &packet, sizeof(packet));
-  if (status < 0) {
-    DLOG(ERROR) << "mx_port_wait failed: " << status;
-    return 1;
-  }
-  if (packet.hdr.key != kExceptionKey) {
-    DLOG(ERROR) << "unexpected crash key";
-    return 1;
-  }
+  // Gets the symbol map entry for |address|. Returns null if no entry could be
+  // found for the address, or if the symbol map could not be queried.
+  Entry* GetForAddress(void* address);
 
-  LOG(ERROR) << "Process crashed.";
+ private:
+  static const size_t kMaxMapEntries = 64;
 
-  // TODO(fuchsia): Log a stack. See https://crbug.com/706592.
+  void Populate();
 
-  _exit(1);
+  // Sorted in descending order by address, for lookup purposes.
+  Entry entries_[kMaxMapEntries];
+
+  size_t count_ = 0;
+  bool valid_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(SymbolMap);
+};
+
+SymbolMap::SymbolMap() {
+  Populate();
 }
 
-bool SetInProcessExceptionHandler() {
-  if (g_in_process_exception_handler_enabled)
-    return true;
-
-  mx_status_t status;
-  mx_handle_t self_dump_port;
-  status = mx_port_create(0u, &self_dump_port);
-  if (status < 0) {
-    DLOG(ERROR) << "mx_port_create failed: " << status;
-    return false;
+SymbolMap::Entry* SymbolMap::GetForAddress(void* address) {
+  if (!valid_) {
+    return nullptr;
   }
 
-  // A thread to wait for and process internal exceptions.
-  thrd_t self_dump_thread;
-  void* self_dump_arg =
-      reinterpret_cast<void*>(static_cast<uintptr_t>(self_dump_port));
-  int ret = thrd_create(&self_dump_thread, SelfDumpFunc, self_dump_arg);
-  if (ret != thrd_success) {
-    DLOG(ERROR) << "thrd_create failed: " << ret;
-    return false;
+  // Working backwards in the address space, return the first map entry whose
+  // address comes before |address| (thereby enclosing it.)
+  for (size_t i = 0; i < count_; ++i) {
+    if (address >= entries_[i].addr) {
+      return &entries_[i];
+    }
+  }
+  return nullptr;
+}
+
+void SymbolMap::Populate() {
+  zx_handle_t process = zx_process_self();
+
+  // Try to fetch the name of the process' main executable, which was set as the
+  // name of the |process| kernel object.
+  // TODO(wez): Object names can only have up to ZX_MAX_NAME_LEN characters, so
+  // if we keep hitting problems with truncation, find a way to plumb argv[0]
+  // through to here instead, e.g. using CommandLine::GetProgramName().
+  char app_name[arraysize(SymbolMap::Entry::name)];
+  strcpy(app_name, kProcessNamePrefix);
+  zx_status_t status = zx_object_get_property(
+      process, ZX_PROP_NAME, app_name + kProcessNamePrefixLen,
+      sizeof(app_name) - kProcessNamePrefixLen);
+  if (status != ZX_OK) {
+    DPLOG(WARNING)
+        << "Couldn't get name, falling back to 'app' for program name: "
+        << status;
+    strlcat(app_name, "app", sizeof(app_name));
   }
 
-  status = mx_task_bind_exception_port(mx_process_self(), self_dump_port,
-                                       kExceptionKey, 0);
+  // Retrieve the debug info struct.
+  constexpr size_t map_capacity = sizeof(entries_);
+  uintptr_t debug_addr;
+  status = zx_object_get_property(process, ZX_PROP_PROCESS_DEBUG_ADDR,
+                                  &debug_addr, sizeof(debug_addr));
+  if (status != ZX_OK) {
+    DPLOG(ERROR) << "Couldn't get symbol map for process: " << status;
+    return;
+  }
+  r_debug* debug_info = reinterpret_cast<r_debug*>(debug_addr);
 
-  if (status < 0) {
-    DLOG(ERROR) << "mx_task_bind_exception_port failed: " << status;
-    return false;
+  // Get the link map from the debug info struct.
+  link_map* lmap = reinterpret_cast<link_map*>(debug_info->r_map);
+  if (!lmap) {
+    DPLOG(ERROR) << "Null link_map for process.";
+    return;
   }
 
-  g_in_process_exception_handler_enabled = true;
-  return true;
+  // Copy the contents of the link map linked list to |entries_|.
+  while (lmap != nullptr) {
+    if (count_ == map_capacity) {
+      break;
+    }
+    SymbolMap::Entry* next_entry = &entries_[count_];
+    count_++;
+
+    next_entry->addr = reinterpret_cast<void*>(lmap->l_addr);
+    char* name_to_use = lmap->l_name[0] ? lmap->l_name : app_name;
+    strlcpy(next_entry->name, name_to_use, sizeof(next_entry->name));
+    lmap = lmap->l_next;
+  }
+
+  std::sort(
+      &entries_[0], &entries_[count_ - 1],
+      [](const Entry& a, const Entry& b) -> bool { return a.addr >= b.addr; });
+
+  valid_ = true;
 }
 
 }  // namespace
 
 // static
 bool EnableInProcessStackDumping() {
-  return SetInProcessExceptionHandler();
+  // StackTrace works to capture the current stack (e.g. for diagnostics added
+  // to code), but for local capture and print of backtraces, we just let the
+  // system crashlogger take over. It handles printing out a nicely formatted
+  // backtrace with dso information, relative offsets, etc. that we can then
+  // filter with addr2line in the run script to get file/line info.
+  return true;
 }
 
 StackTrace::StackTrace(size_t count) : count_(0) {
@@ -115,12 +176,36 @@ void StackTrace::Print() const {
   OutputToStream(&std::cerr);
 }
 
+// Sample stack trace output is designed to be similar to Fuchsia's crashlogger:
+// bt#00: pc 0x1527a058aa00 (app:/system/base_unittests,0x18bda00)
+// bt#01: pc 0x1527a0254b5c (app:/system/base_unittests,0x1587b5c)
+// bt#02: pc 0x15279f446ece (app:/system/base_unittests,0x779ece)
+// ...
+// bt#21: pc 0x1527a05b51b4 (app:/system/base_unittests,0x18e81b4)
+// bt#22: pc 0x54fdbf3593de (libc.so,0x1c3de)
+// bt#23: end
 void StackTrace::OutputToStream(std::ostream* os) const {
-  // TODO(fuchsia): Consider doing symbol resolution here. See
-  // https://crbug.com/706592.
-  for (size_t i = 0; (i < count_) && os->good(); ++i) {
-    (*os) << "\t" << trace_[i] << "\n";
+  SymbolMap map;
+
+  size_t i = 0;
+  for (; (i < count_) && os->good(); ++i) {
+    SymbolMap::Entry* entry = map.GetForAddress(trace_[i]);
+    if (entry) {
+      size_t offset = reinterpret_cast<uintptr_t>(trace_[i]) -
+                      reinterpret_cast<uintptr_t>(entry->addr);
+      *os << "bt#" << std::setw(2) << std::setfill('0') << i << std::setw(0)
+          << ": pc " << trace_[i] << " (" << entry->name << ",0x" << std::hex
+          << offset << std::dec << std::setw(0) << ")\n";
+    } else {
+      // Fallback if the DSO map isn't available.
+      // Logged PC values are absolute memory addresses, and the shared object
+      // name is not emitted.
+      *os << "bt#" << std::setw(2) << std::setfill('0') << i << std::setw(0)
+          << ": pc " << trace_[i] << "\n";
+    }
   }
+
+  (*os) << "bt#" << std::setw(2) << i << ": end\n";
 }
 
 }  // namespace debug

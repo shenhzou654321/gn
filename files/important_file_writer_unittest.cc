@@ -15,6 +15,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/histogram_tester.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -132,7 +133,7 @@ TEST_F(ImportantFileWriterTest, Basic) {
   ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
   EXPECT_FALSE(PathExists(writer.path()));
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
-  writer.WriteNow(MakeUnique<std::string>("foo"));
+  writer.WriteNow(std::make_unique<std::string>("foo"));
   RunLoop().RunUntilIdle();
 
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
@@ -147,7 +148,7 @@ TEST_F(ImportantFileWriterTest, WriteWithObserver) {
 
   // Confirm that the observer is invoked.
   write_callback_observer_.ObserveNextWriteCallbacks(&writer);
-  writer.WriteNow(MakeUnique<std::string>("foo"));
+  writer.WriteNow(std::make_unique<std::string>("foo"));
   RunLoop().RunUntilIdle();
 
   EXPECT_EQ(CALLED_WITH_SUCCESS,
@@ -158,7 +159,7 @@ TEST_F(ImportantFileWriterTest, WriteWithObserver) {
   // Confirm that re-installing the observer works for another write.
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
   write_callback_observer_.ObserveNextWriteCallbacks(&writer);
-  writer.WriteNow(MakeUnique<std::string>("bar"));
+  writer.WriteNow(std::make_unique<std::string>("bar"));
   RunLoop().RunUntilIdle();
 
   EXPECT_EQ(CALLED_WITH_SUCCESS,
@@ -169,7 +170,7 @@ TEST_F(ImportantFileWriterTest, WriteWithObserver) {
   // Confirm that writing again without re-installing the observer doesn't
   // result in a notification.
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
-  writer.WriteNow(MakeUnique<std::string>("baz"));
+  writer.WriteNow(std::make_unique<std::string>("baz"));
   RunLoop().RunUntilIdle();
 
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
@@ -185,7 +186,7 @@ TEST_F(ImportantFileWriterTest, FailedWriteWithObserver) {
   EXPECT_FALSE(PathExists(writer.path()));
   EXPECT_EQ(NOT_CALLED, write_callback_observer_.GetAndResetObservationState());
   write_callback_observer_.ObserveNextWriteCallbacks(&writer);
-  writer.WriteNow(MakeUnique<std::string>("foo"));
+  writer.WriteNow(std::make_unique<std::string>("foo"));
   RunLoop().RunUntilIdle();
 
   // Confirm that the write observer was invoked with its boolean parameter set
@@ -211,7 +212,7 @@ TEST_F(ImportantFileWriterTest, CallbackRunsOnWriterThread) {
                                 base::Unretained(&wait_helper)));
 
   write_callback_observer_.ObserveNextWriteCallbacks(&writer);
-  writer.WriteNow(MakeUnique<std::string>("foo"));
+  writer.WriteNow(std::make_unique<std::string>("foo"));
   RunLoop().RunUntilIdle();
 
   // Expect the callback to not have been executed before the
@@ -300,7 +301,7 @@ TEST_F(ImportantFileWriterTest, ScheduleWrite_WriteNow) {
   DataSerializer serializer("foo");
   writer.ScheduleWrite(&serializer);
   EXPECT_TRUE(writer.HasPendingWrite());
-  writer.WriteNow(MakeUnique<std::string>("bar"));
+  writer.WriteNow(std::make_unique<std::string>("bar"));
   EXPECT_FALSE(writer.HasPendingWrite());
   EXPECT_FALSE(timer.IsRunning());
 
@@ -323,6 +324,27 @@ TEST_F(ImportantFileWriterTest, DoScheduledWrite_FailToSerialize) {
   EXPECT_FALSE(writer.HasPendingWrite());
   RunLoop().RunUntilIdle();
   EXPECT_FALSE(PathExists(writer.path()));
+}
+
+TEST_F(ImportantFileWriterTest, WriteFileAtomicallyHistogramSuffixTest) {
+  base::HistogramTester histogram_tester;
+  EXPECT_FALSE(PathExists(file_));
+  EXPECT_TRUE(ImportantFileWriter::WriteFileAtomically(file_, "baz", "test"));
+  EXPECT_TRUE(PathExists(file_));
+  EXPECT_EQ("baz", GetFileContent(file_));
+  histogram_tester.ExpectTotalCount("ImportantFile.FileCreateError", 0);
+  histogram_tester.ExpectTotalCount("ImportantFile.FileCreateError.test", 0);
+
+  FilePath invalid_file_ = FilePath().AppendASCII("bad/../non_existent/path");
+  EXPECT_FALSE(PathExists(invalid_file_));
+  EXPECT_FALSE(
+      ImportantFileWriter::WriteFileAtomically(invalid_file_, nullptr));
+  histogram_tester.ExpectTotalCount("ImportantFile.FileCreateError", 1);
+  histogram_tester.ExpectTotalCount("ImportantFile.FileCreateError.test", 0);
+  EXPECT_FALSE(
+      ImportantFileWriter::WriteFileAtomically(invalid_file_, nullptr, "test"));
+  histogram_tester.ExpectTotalCount("ImportantFile.FileCreateError", 1);
+  histogram_tester.ExpectTotalCount("ImportantFile.FileCreateError.test", 1);
 }
 
 }  // namespace base

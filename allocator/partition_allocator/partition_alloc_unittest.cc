@@ -10,6 +10,8 @@
 #include <memory>
 #include <vector>
 
+#include "base/allocator/partition_allocator/address_space_randomization.h"
+#include "base/bit_cast.h"
 #include "base/bits.h"
 #include "base/sys_info.h"
 #include "build/build_config.h"
@@ -304,7 +306,71 @@ class MockPartitionStatsDumper : public PartitionStatsDumper {
   std::vector<PartitionBucketMemoryStats> bucket_stats;
 };
 
+// Any number of bytes that can be allocated with no trouble.
+const size_t kEasyAllocSize = (1024 * 1024) & ~(kPageAllocationGranularity - 1);
+
+// Generate many random addresses to get a very large fraction of the platform
+// address space. This gives us an allocation size that is very likely to fail
+// on most platforms without triggering bugs in allocation code for very large
+// requests.
+size_t GetHugeMemoryAmount() {
+  static size_t huge_memory = 0;
+  if (!huge_memory) {
+    for (int i = 0; i < 100; i++) {
+      huge_memory |= bit_cast<size_t>(base::GetRandomPageBase());
+    }
+    // Make it larger than the available address space.
+    huge_memory *= 2;
+  }
+  return huge_memory;
+}
+
 }  // anonymous namespace
+
+// Test that failed page allocations invoke base::ReleaseReservation().
+// We detect this by making a reservation and ensuring that after failure, we
+// can make a new reservation.
+TEST(PageAllocatorTest, AllocFailure) {
+  // We can make a reservation.
+  EXPECT_TRUE(base::ReserveAddressSpace(kEasyAllocSize));
+
+  // We can't make another reservation until we trigger an allocation failure.
+  EXPECT_FALSE(base::ReserveAddressSpace(kEasyAllocSize));
+
+  size_t size = GetHugeMemoryAmount();
+  // Skip the test for sanitizers and platforms with ASLR turned off.
+  if (size == 0)
+    return;
+
+  void* result = base::AllocPages(nullptr, size, kPageAllocationGranularity,
+                                  PageInaccessible);
+  if (result == nullptr) {
+    // We triggered allocation failure. Our reservation should have been
+    // released, and we should be able to make a new reservation.
+    EXPECT_TRUE(base::ReserveAddressSpace(kEasyAllocSize));
+    base::ReleaseReservation();
+    return;
+  }
+  // We couldn't fail. Make sure reservation is still there.
+  EXPECT_FALSE(base::ReserveAddressSpace(kEasyAllocSize));
+}
+
+// TODO(crbug.com/765801): Test failed on chromium.win/Win10 Tests x64.
+// Test that reserving address space can fail.
+TEST(PageAllocatorTest, DISABLED_ReserveAddressSpace) {
+  size_t size = GetHugeMemoryAmount();
+  // Skip the test for sanitizers and platforms with ASLR turned off.
+  if (size == 0)
+    return;
+
+  bool success = base::ReserveAddressSpace(size);
+  if (!success) {
+    EXPECT_TRUE(base::ReserveAddressSpace(kEasyAllocSize));
+    return;
+  }
+  // We couldn't fail. Make sure reservation is still there.
+  EXPECT_FALSE(base::ReserveAddressSpace(kEasyAllocSize));
+}
 
 // Check that the most basic of allocate / free pairs work.
 TEST_F(PartitionAllocTest, Basic) {
@@ -1122,13 +1188,15 @@ TEST_F(PartitionAllocTest, MappingCollision) {
   // with the goal of tripping up alignment of the next mapping.
   map1 = AllocPages(pageBase - kPageAllocationGranularity,
                     kPageAllocationGranularity, kPageAllocationGranularity,
-                    PageAccessible);
+                    PageReadWrite);
   EXPECT_TRUE(map1);
   map2 = AllocPages(pageBase + kSuperPageSize, kPageAllocationGranularity,
-                    kPageAllocationGranularity, PageAccessible);
+                    kPageAllocationGranularity, PageReadWrite);
   EXPECT_TRUE(map2);
-  SetSystemPagesInaccessible(map1, kPageAllocationGranularity);
-  SetSystemPagesInaccessible(map2, kPageAllocationGranularity);
+  EXPECT_TRUE(
+      SetSystemPagesAccess(map1, kPageAllocationGranularity, PageInaccessible));
+  EXPECT_TRUE(
+      SetSystemPagesAccess(map2, kPageAllocationGranularity, PageInaccessible));
 
   PartitionPage* pageInThirdSuperPage = GetFullPage(kTestAllocSize);
   FreePages(map1, kPageAllocationGranularity);
@@ -1839,14 +1907,22 @@ TEST_F(PartitionAllocTest, PurgeDiscardable) {
       EXPECT_TRUE(stats);
       EXPECT_TRUE(stats->is_valid);
       EXPECT_EQ(0u, stats->decommittable_bytes);
+#if defined(OS_WIN)
+      EXPECT_EQ(0u, stats->discardable_bytes);
+#else
       EXPECT_EQ(kSystemPageSize, stats->discardable_bytes);
+#endif
       EXPECT_EQ(kSystemPageSize, stats->active_bytes);
       EXPECT_EQ(2 * kSystemPageSize, stats->resident_bytes);
     }
     CheckPageInCore(ptr1 - kPointerOffset, true);
     PartitionPurgeMemoryGeneric(generic_allocator.root(),
                                 PartitionPurgeDiscardUnusedSystemPages);
+#if defined(OS_WIN)
+    CheckPageInCore(ptr1 - kPointerOffset, true);
+#else
     CheckPageInCore(ptr1 - kPointerOffset, false);
+#endif
 
     PartitionFreeGeneric(generic_allocator.root(), ptr2);
   }
@@ -1969,7 +2045,11 @@ TEST_F(PartitionAllocTest, PurgeDiscardable) {
       EXPECT_TRUE(stats);
       EXPECT_TRUE(stats->is_valid);
       EXPECT_EQ(0u, stats->decommittable_bytes);
+#if defined(OS_WIN)
+      EXPECT_EQ(kSystemPageSize, stats->discardable_bytes);
+#else
       EXPECT_EQ(2 * kSystemPageSize, stats->discardable_bytes);
+#endif
       EXPECT_EQ(kSystemPageSize, stats->active_bytes);
       EXPECT_EQ(4 * kSystemPageSize, stats->resident_bytes);
     }
@@ -1981,7 +2061,11 @@ TEST_F(PartitionAllocTest, PurgeDiscardable) {
                                 PartitionPurgeDiscardUnusedSystemPages);
     EXPECT_EQ(1u, page->num_unprovisioned_slots);
     CheckPageInCore(ptr1 - kPointerOffset, true);
+#if defined(OS_WIN)
+    CheckPageInCore(ptr1 - kPointerOffset + kSystemPageSize, true);
+#else
     CheckPageInCore(ptr1 - kPointerOffset + kSystemPageSize, false);
+#endif
     CheckPageInCore(ptr1 - kPointerOffset + (kSystemPageSize * 2), true);
     CheckPageInCore(ptr1 - kPointerOffset + (kSystemPageSize * 3), false);
 
