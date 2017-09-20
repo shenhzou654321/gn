@@ -582,7 +582,6 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/debug/debugger_posix.cc',
         'base/debug/stack_trace_posix.cc',
         'base/debug/thread_heap_usage_tracker.cc',
-        'base/files/file_descriptor_watcher_posix.cc',
         'base/files/file_enumerator_posix.cc',
         'base/files/file_descriptor_watcher_posix.cc',
         'base/files/file_posix.cc',
@@ -646,10 +645,14 @@ def write_gn_ninja(path, root_gen_dir, options):
         'tool': 'cxx',
     }
 
+    static_libraries['base']['sources'].remove('base/process/memory.cc')
     static_libraries['base']['sources'].extend([
         'base/memory/shared_memory_posix.cc',
+        'base/memory/shared_memory_handle_posix.cc',
         'base/nix/xdg_util.cc',
+        'base/process/memory_stubs.cc',
         'base/process/process_handle_freebsd.cc',
+        'base/process/process_info_freebsd.cc',
         'base/process/process_iterator_freebsd.cc',
         'base/process/process_metrics_freebsd.cc',
         'base/strings/sys_string_conversions_posix.cc',
