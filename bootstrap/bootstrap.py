@@ -20,6 +20,7 @@ import errno
 import logging
 import optparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -89,6 +90,13 @@ def run_build(tempdir, options):
     # Preserve the executable permission bit.
     shutil.copy2(out_gn, options.output)
 
+def windows_target_build_arch():
+    # Target build architecture set by vcvarsall.bat
+    target_arch = os.environ.get('Platform')
+    if target_arch in ['x64', 'x86']: return target_arch
+
+    if platform.machine().lower() in ['x86_64', 'amd64']: return 'x64'
+    return 'x86'
 
 def main(argv):
   parser = optparse.OptionParser(description=sys.modules[__name__].__doc__)
@@ -174,6 +182,7 @@ def build_gn_with_ninja_manually(tempdir, options):
 
   write_buildflag_header_manually(root_gen_dir, 'base/debug/debugging_flags.h',
       {
+          'ENABLE_LOCATION_SOURCE': 'false',
           'ENABLE_PROFILING': 'false',
           'CAN_UNWIND_WITH_FRAME_POINTERS': 'false'
       })
@@ -199,7 +208,7 @@ def build_gn_with_ninja_manually(tempdir, options):
 
   write_gn_ninja(os.path.join(tempdir, 'build.ninja'),
                  root_gen_dir, options)
-  cmd = ['ninja', '-C', tempdir]
+  cmd = ['ninja', '-C', tempdir, '-w', 'dupbuild=err']
   if options.verbose:
     cmd.append('-v')
   if options.jobs:
@@ -346,7 +355,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         '-pipe',
         '-fno-exceptions'
     ])
-    cflags_cc.extend(['-std=c++11', '-Wno-c++11-narrowing'])
+    cflags_cc.extend(['-std=c++14', '-Wno-c++11-narrowing'])
     if is_aix:
      cflags.extend(['-maix64'])
      ldflags.extend([ '-maix64 -Wl,-bbigtoc' ])
@@ -369,8 +378,12 @@ def write_gn_ninja(path, root_gen_dir, options):
         '/GR-',
         '/D_HAS_EXCEPTIONS=0',
     ])
-    # TODO(tim): Support for 64bit builds?
-    ldflags.extend(['/MACHINE:x86', '/DEBUG'])
+
+    target_arch = windows_target_build_arch()
+    if target_arch == 'x64':
+        ldflags.extend(['/MACHINE:x64'])
+    else:
+        ldflags.extend(['/MACHINE:x86'])
 
   static_libraries = {
       'base': {'sources': [], 'tool': 'cxx', 'include_dirs': []},
@@ -416,6 +429,7 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/debug/dump_without_crashing.cc',
       'base/debug/stack_trace.cc',
       'base/debug/task_annotator.cc',
+      'base/debug/thread_heap_usage_tracker.cc',
       'base/environment.cc',
       'base/feature_list.cc',
       'base/files/file.cc',
@@ -451,9 +465,12 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/metrics/bucket_ranges.cc',
       'base/metrics/field_trial.cc',
       'base/metrics/field_trial_param_associator.cc',
+      'base/metrics/field_trial_params.cc',
       'base/metrics/histogram.cc',
       'base/metrics/histogram_base.cc',
+      'base/metrics/histogram_functions.cc',
       'base/metrics/histogram_samples.cc',
+      'base/metrics/histogram_snapshot_manager.cc',
       'base/metrics/metrics_hashes.cc',
       'base/metrics/persistent_histogram_allocator.cc',
       'base/metrics/persistent_memory_allocator.cc',
@@ -470,9 +487,6 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/process/process_handle.cc',
       'base/process/process_iterator.cc',
       'base/process/process_metrics.cc',
-      'base/profiler/scoped_profile.cc',
-      'base/profiler/scoped_tracker.cc',
-      'base/profiler/tracked_time.cc',
       'base/rand_util.cc',
       'base/run_loop.cc',
       'base/sequence_token.cc',
@@ -499,6 +513,7 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/task_scheduler/scheduler_lock_impl.cc',
       'base/task_scheduler/scheduler_single_thread_task_runner_manager.cc',
       'base/task_scheduler/scheduler_worker.cc',
+      'base/task_scheduler/scheduler_worker_pool.cc',
       'base/task_scheduler/scheduler_worker_pool_impl.cc',
       'base/task_scheduler/scheduler_worker_pool_params.cc',
       'base/task_scheduler/scheduler_worker_stack.cc',
@@ -515,6 +530,8 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/third_party/icu/icu_utf.cc',
       'base/third_party/nspr/prtime.cc',
       'base/threading/post_task_and_reply_impl.cc',
+      'base/threading/scoped_blocking_call.cc',
+      'base/threading/sequence_local_storage_map.cc',
       'base/threading/sequenced_task_runner_handle.cc',
       'base/threading/sequenced_worker_pool.cc',
       'base/threading/simple_thread.cc',
@@ -552,11 +569,8 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/trace_event/memory_dump_scheduler.cc',
       'base/trace_event/memory_infra_background_whitelist.cc',
       'base/trace_event/memory_peak_detector.cc',
-      'base/trace_event/memory_tracing_observer.cc',
       'base/trace_event/memory_usage_estimator.cc',
       'base/trace_event/process_memory_dump.cc',
-      'base/trace_event/process_memory_maps.cc',
-      'base/trace_event/process_memory_totals.cc',
       'base/trace_event/sharded_allocation_register.cc',
       'base/trace_event/trace_buffer.cc',
       'base/trace_event/trace_config.cc',
@@ -565,13 +579,12 @@ def write_gn_ninja(path, root_gen_dir, options):
       'base/trace_event/trace_event_filter.cc',
       'base/trace_event/trace_event_impl.cc',
       'base/trace_event/trace_event_memory_overhead.cc',
-      'base/trace_event/trace_event_synthetic_delay.cc',
       'base/trace_event/trace_log.cc',
       'base/trace_event/trace_log_constants.cc',
       'base/trace_event/tracing_agent.cc',
       'base/tracked_objects.cc',
-      'base/tracking_info.cc',
       'base/unguessable_token.cc',
+      'base/value_iterators.cc',
       'base/values.cc',
       'base/vlog.cc',
   ])
@@ -601,7 +614,6 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/synchronization/condition_variable_posix.cc',
         'base/synchronization/lock_impl_posix.cc',
         'base/synchronization/read_write_lock_posix.cc',
-        'base/synchronization/waitable_event_posix.cc',
         'base/sys_info_posix.cc',
         'base/task_scheduler/task_tracker_posix.cc',
         'base/threading/platform_thread_internal_posix.cc',
@@ -609,8 +621,6 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/threading/thread_local_storage_posix.cc',
         'base/threading/worker_pool_posix.cc',
         'base/time/time_conversion_posix.cc',
-        'base/time/time_exploded_posix.cc',
-        'base/time/time_now_posix.cc',
         'base/trace_event/heap_profiler_allocation_register_posix.cc',
     ])
     static_libraries['libevent'] = {
@@ -680,7 +690,6 @@ def write_gn_ninja(path, root_gen_dir, options):
     static_libraries['base']['sources'].extend([
         'base/memory/shared_memory_handle_posix.cc',
         'base/memory/shared_memory_posix.cc',
-        'base/memory/shared_memory_tracker.cc',
         'base/nix/xdg_util.cc',
         'base/process/internal_linux.cc',
         'base/process/memory_linux.cc',
@@ -690,7 +699,10 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/process/process_linux.cc',
         'base/process/process_metrics_linux.cc',
         'base/strings/sys_string_conversions_posix.cc',
+        'base/synchronization/waitable_event_posix.cc',
         'base/sys_info_linux.cc',
+        'base/time/time_exploded_posix.cc',
+        'base/time/time_now_posix.cc',
         'base/threading/platform_thread_linux.cc',
     ])
     if is_linux:
@@ -737,6 +749,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'base/process/process_iterator_mac.cc',
         'base/process/process_metrics_mac.cc',
         'base/strings/sys_string_conversions_mac.mm',
+        'base/synchronization/waitable_event_mac.cc',
         'base/sys_info_mac.mm',
         'base/time/time_mac.cc',
         'base/threading/platform_thread_mac.mm',
@@ -839,6 +852,7 @@ def write_gn_ninja(path, root_gen_dir, options):
         'version.lib',
         'winmm.lib',
         'ws2_32.lib',
+        'Shlwapi.lib',
     ])
 
   # we just build static libraries that GN needs
@@ -854,7 +868,7 @@ def build_gn_with_gn(temp_gn, build_dir, options):
   cmd = [temp_gn, 'gen', build_dir, '--args=%s' % gn_gen_args]
   check_call(cmd)
 
-  cmd = ['ninja', '-C', build_dir]
+  cmd = ['ninja', '-C', build_dir, '-w', 'dupbuild=err']
   if options.verbose:
     cmd.append('-v')
   cmd.append('gn')
