@@ -5,8 +5,6 @@ addons:
     sources: &sources
       # this is needed for gcc and clang
       - ubuntu-toolchain-r-test
-    packages: &packages
-      - ninja-build
 
 matrix:
   include:
@@ -18,7 +16,6 @@ matrix:
             - *sources
           packages:
             - g++-4.9
-            - *packages
 
     - compiler: clang
       os: linux
@@ -29,18 +26,20 @@ matrix:
             - *sources
           packages:
             - clang-3.8
-            - *packages
 
 install:
   # GCC 4.9
   - if [ "$CXX" = "g++" ]; then export CXX="g++-4.9" CC="gcc-4.9" GN_ARGS="gcc_cc=\"gcc-4.9\" gcc_cxx=\"g++-4.9\" is_clang=false"; fi
   # Clang 3.8
   - if [ "$CXX" == "clang++" ]; then export CXX="clang++-3.8" CC="clang-3.8" GN_ARGS="clang_cc=\"clang-3.8\" clang_cxx=\"clang++-3.8\" is_clang=true"; fi
+  - git clone --depth=1 --branch=master https://github.com/ninja-build/ninja.git
+  - mkdir bin && cd bin && ../ninja/configure.py --bootstrap
+  - cd ..
 
 script:
   # Restrict concurrent compile jobs to 10 to prevent OOM errors
   - git submodule update --init --recursive
-  - tools/gn/bootstrap/bootstrap.py --no-clean --no-rebuild --jobs 10
+  - PATH="$(pwd)/bin:$PATH" tools/gn/bootstrap/bootstrap.py --no-clean --no-rebuild --jobs 10
   - out_bootstrap/gn gen out/Release --args="is_debug=false $GN_ARGS"
-  - ninja -C out/Release -j10 gn gn_unittests
+  - bin/ninja -C out/Release -j10 gn gn_unittests
   - out/Release/gn_unittests

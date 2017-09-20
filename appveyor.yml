@@ -11,6 +11,7 @@ before_build:
     - ..\ninja\configure.py --bootstrap
     - cd ..
     - set PATH=%PATH%;%cd%\ninja-build
+    - set Platform=x86
 
 build_script:
     # Build the debug version to stay inside our allowed timeframe (1h)
