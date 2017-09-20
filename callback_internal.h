@@ -93,14 +93,14 @@ class BASE_EXPORT BindStateBase
 template <>
 class BASE_EXPORT CallbackBase<CopyMode::MoveOnly> {
  public:
-  CallbackBase(CallbackBase&& c);
-  CallbackBase& operator=(CallbackBase&& c);
+  CallbackBase(CallbackBase&& c) noexcept;
+  CallbackBase& operator=(CallbackBase&& c) noexcept;
 
   explicit CallbackBase(const CallbackBase<CopyMode::Copyable>& c);
   CallbackBase& operator=(const CallbackBase<CopyMode::Copyable>& c);
 
-  explicit CallbackBase(CallbackBase<CopyMode::Copyable>&& c);
-  CallbackBase& operator=(CallbackBase<CopyMode::Copyable>&& c);
+  explicit CallbackBase(CallbackBase<CopyMode::Copyable>&& c) noexcept;
+  CallbackBase& operator=(CallbackBase<CopyMode::Copyable>&& c) noexcept;
 
   // Returns true if Callback is null (doesn't refer to anything).
   bool is_null() const { return !bind_state_; }

@@ -49,11 +49,11 @@ CallbackBase<CopyMode::MoveOnly>& CallbackBase<CopyMode::MoveOnly>::operator=(
 }
 
 CallbackBase<CopyMode::MoveOnly>::CallbackBase(
-    CallbackBase<CopyMode::Copyable>&& c)
+    CallbackBase<CopyMode::Copyable>&& c) noexcept
     : bind_state_(std::move(c.bind_state_)) {}
 
 CallbackBase<CopyMode::MoveOnly>& CallbackBase<CopyMode::MoveOnly>::operator=(
-    CallbackBase<CopyMode::Copyable>&& c) {
+    CallbackBase<CopyMode::Copyable>&& c) noexcept {
   bind_state_ = std::move(c.bind_state_);
   return *this;
 }
