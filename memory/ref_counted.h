@@ -521,13 +521,13 @@ class scoped_refptr {
 
   // Move constructor. This is required in addition to the conversion
   // constructor below in order for clang to warn about pessimizing moves.
-  scoped_refptr(scoped_refptr&& r) : ptr_(r.get()) { r.ptr_ = nullptr; }
+  scoped_refptr(scoped_refptr&& r) noexcept : ptr_(r.get()) { r.ptr_ = nullptr; }
 
   // Move conversion constructor.
   template <typename U,
             typename = typename std::enable_if<
                 std::is_convertible<U*, T*>::value>::type>
-  scoped_refptr(scoped_refptr<U>&& r) : ptr_(r.get()) {
+  scoped_refptr(scoped_refptr<U>&& r) noexcept : ptr_(r.get()) {
     r.ptr_ = nullptr;
   }
 
@@ -568,14 +568,14 @@ class scoped_refptr {
     return *this = r.get();
   }
 
-  scoped_refptr<T>& operator=(scoped_refptr<T>&& r) {
+  scoped_refptr<T>& operator=(scoped_refptr<T>&& r) noexcept {
     scoped_refptr<T> tmp(std::move(r));
     tmp.swap(*this);
     return *this;
   }
 
   template <typename U>
-  scoped_refptr<T>& operator=(scoped_refptr<U>&& r) {
+  scoped_refptr<T>& operator=(scoped_refptr<U>&& r) noexcept {
     // We swap with a temporary variable to guarantee that |ptr_| is released
     // immediately. A naive implementation which swaps |this| and |r| would
     // unintentionally extend the lifetime of |ptr_| to at least the lifetime of
