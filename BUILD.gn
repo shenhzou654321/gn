@@ -1652,13 +1652,16 @@ component("base") {
 
   if (is_freebsd) {
     sources -= [
+      "process/memory.cc",
       "trace_event/malloc_dump_provider.cc",
       "trace_event/malloc_dump_provider.h",
     ]
     sources += [
+      "base_paths_posix.cc",
       #"files/file_path_watcher_kqueue.cc",
       #"files/file_path_watcher_kqueue.h",
       "process/memory_stubs.cc",
+      "process/process_info_freebsd.cc",
       "threading/platform_thread_freebsd.cc",
       "nix/mime_util_xdg.cc",
       "nix/mime_util_xdg.h",

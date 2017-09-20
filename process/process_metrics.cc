@@ -12,10 +12,13 @@
 
 namespace base {
 
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
+    defined(OS_ANDROID) || defined(OS_AIX) || defined(OS_FUCHSIA)
 SystemMemoryInfoKB::SystemMemoryInfoKB() = default;
 
 SystemMemoryInfoKB::SystemMemoryInfoKB(const SystemMemoryInfoKB& other) =
     default;
+#endif
 
 SystemMetrics::SystemMetrics() {
   committed_memory_ = 0;

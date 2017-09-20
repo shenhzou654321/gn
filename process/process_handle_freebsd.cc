@@ -3,7 +3,10 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
+#include "base/memory/free_deleter.h"
 #include "base/process/process_handle.h"
+
+#include <memory>
 
 #include <limits.h>
 #include <stddef.h>
@@ -15,14 +18,17 @@
 namespace base {
 
 ProcessId GetParentProcessId(ProcessHandle process) {
-  struct kinfo_proc info;
-  size_t length;
   int mib[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, process };
-
-  if (sysctl(mib, arraysize(mib), &info, &length, NULL, 0) < 0)
+  size_t len = 0;
+  if (sysctl(mib, arraysize(mib), NULL, &len, NULL, 0) < 0)
     return -1;
 
-  return info.ki_ppid;
+  std::unique_ptr<struct kinfo_proc, base::FreeDeleter> proc(
+      static_cast<struct kinfo_proc*>(malloc(len)));
+  if (sysctl(mib, arraysize(mib), proc.get(), &len, NULL, 0) < 0)
+    return -1;
+
+  return proc->ki_ppid;
 }
 
 FilePath GetProcessExecutablePath(ProcessHandle process) {

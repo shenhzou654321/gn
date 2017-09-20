@@ -21,7 +21,7 @@
 
 #if defined(OS_MACOSX)
 #include <malloc/malloc.h>
-#else
+#elif !defined(OS_BSD)
 #include <malloc.h>
 #endif
 #if defined(OS_WIN)
@@ -243,7 +243,7 @@ bool MallocDumpProvider::OnMemoryDump(const MemoryDumpArgs& args,
   allocated_objects_count = main_heap_info.block_count;
 #elif defined(OS_FUCHSIA)
 // TODO(fuchsia): Port, see https://crbug.com/706592.
-#else
+#elif !defined(OS_BSD)
   struct mallinfo info = mallinfo();
   DCHECK_GE(info.arena + info.hblkhd, info.uordblks);
 
