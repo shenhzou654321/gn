@@ -24,4 +24,9 @@ int64_t SysInfo::AmountOfPhysicalMemoryImpl() {
   return static_cast<int64_t>(pages) * page_size;
 }
 
+int64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
+  // NOT IMPLEMENTED
+  return 0;
+}
+
 }  // namespace base

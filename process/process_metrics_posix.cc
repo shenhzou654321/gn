@@ -16,7 +16,7 @@
 
 #if defined(OS_MACOSX)
 #include <malloc/malloc.h>
-#else
+#elif !defined(OS_FREEBSD)
 #include <malloc.h>
 #endif
 
@@ -101,7 +101,7 @@ size_t ProcessMetrics::GetMallocUsage() {
 #else
   return minfo.hblkhd + minfo.arena;
 #endif
-#elif defined(OS_FUCHSIA)
+#else
   // TODO(fuchsia): Not currently exposed. https://crbug.com/735087.
   return 0;
 #endif

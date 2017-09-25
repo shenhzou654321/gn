@@ -80,7 +80,7 @@ SequenceLocalStorageMap::ValueDestructorPair::~ValueDestructorPair() {
 }
 
 SequenceLocalStorageMap::ValueDestructorPair::ValueDestructorPair(
-    ValueDestructorPair&& value_destructor_pair)
+    ValueDestructorPair&& value_destructor_pair) noexcept
     : value_(value_destructor_pair.value_),
       destructor_(value_destructor_pair.destructor_) {
   value_destructor_pair.value_ = nullptr;
@@ -88,7 +88,7 @@ SequenceLocalStorageMap::ValueDestructorPair::ValueDestructorPair(
 
 SequenceLocalStorageMap::ValueDestructorPair&
 SequenceLocalStorageMap::ValueDestructorPair::operator=(
-    ValueDestructorPair&& value_destructor_pair) {
+    ValueDestructorPair&& value_destructor_pair) noexcept {
   // Destroy |value_| before overwriting it with a new value.
   if (value_)
     destructor_(value_);

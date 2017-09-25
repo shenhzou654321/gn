@@ -40,9 +40,8 @@ class BASE_EXPORT SequenceLocalStorageMap {
     ValueDestructorPair(void* value, DestructorFunc* destructor);
     ~ValueDestructorPair();
 
-    ValueDestructorPair(ValueDestructorPair&& value_destructor_pair);
-
-    ValueDestructorPair& operator=(ValueDestructorPair&& value_destructor_pair);
+    ValueDestructorPair(ValueDestructorPair&& value_destructor_pair) noexcept;
+    ValueDestructorPair& operator=(ValueDestructorPair&& value_destructor_pair) noexcept;
 
     void* value() const { return value_; }
 
