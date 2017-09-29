@@ -46,7 +46,7 @@ enum PBXObjectClass {
   XCConfigurationListClass,
 };
 
-const char* ToString(PBXObjectClass cls);
+std::string ToString(PBXObjectClass cls);
 
 // Forward-declarations -------------------------------------------------------
 

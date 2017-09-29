@@ -238,7 +238,7 @@ void PrintProperty(std::ostream& out,
 
 // PBXObjectClass -------------------------------------------------------------
 
-const char* ToString(PBXObjectClass cls) {
+std::string ToString(PBXObjectClass cls) {
   switch (cls) {
     case PBXAggregateTargetClass:
       return "PBXAggregateTarget";
@@ -268,7 +268,7 @@ const char* ToString(PBXObjectClass cls) {
       return "XCConfigurationList";
   }
   NOTREACHED();
-  return nullptr;
+  return {};
 }
 
 // PBXObjectVisitor -----------------------------------------------------------
