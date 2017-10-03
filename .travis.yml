@@ -17,16 +17,6 @@ matrix:
           packages:
             - g++-4.9
 
-    - compiler: clang
-      os: linux
-      addons:
-        apt:
-          sources:
-            - llvm-toolchain-precise-3.8
-            - *sources
-          packages:
-            - clang-3.8
-
 install:
   # GCC 4.9
   - if [ "$CXX" = "g++" ]; then export CXX="g++-4.9" CC="gcc-4.9" GN_ARGS="gcc_cc=\"gcc-4.9\" gcc_cxx=\"g++-4.9\" is_clang=false"; fi
