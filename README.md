@@ -1,3 +1,9 @@
+# Obsolete
+
+The Chromium team now maintains GN as a standalone project, making this unofficial version obsolete.
+
+You can find the official version at https://gn.googlesource.com/gn.
+
 # Standalone GN
 
 [![Build Status](https://travis-ci.org/timniederhausen/gn.svg?branch=master)](https://travis-ci.org/timniederhausen/gn)
