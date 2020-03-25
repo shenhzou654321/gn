@@ -357,6 +357,7 @@ def WriteGNNinja(path, platform, host, options):
 
     if platform.is_posix() and not platform.is_haiku():
       ldflags.append('-pthread')
+      ldflags.append('-Wl,-rpath,$ORIGIN')
 
     if platform.is_mingw():
       cflags.extend(['-DUNICODE',
